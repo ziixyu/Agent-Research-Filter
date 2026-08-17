@@ -1,10 +1,12 @@
 {
-  "generated_at": "2026-08-17T19:06:05.143398",
+  "generated_at": "2026-08-17T20:49:02.399126",
   "query": "Semaglutide AND (\"NASH\" OR \"MASH\") AND fibrosis",
   "model": "gemini-flash-lite-latest",
   "papers_fetched": 10,
-  "papers_relevant": 7,
-  "papers_dropped_irrelevant": 3,
+  "papers_relevant": 6,
+  "papers_dropped_irrelevant": 4,
+  "papers_flagged_for_audit": 0,
+  "papers_quarantined": [],
   "full_ranking": [
     {
       "metadata": {
@@ -32,18 +34,20 @@
       "telemetry": {
         "is_relevant": true,
         "study_design": "RCT",
-        "sample_size": 1197,
-        "claim_hyperbole": 2
+        "sample_size": 800,
+        "claim_hyperbole": 1
       },
       "prior_credence": 0.9,
       "rigor_baseline": 4.5,
       "discrepancy_index": 0.0,
-      "sample_power_weight": 0.7755,
+      "sample_power_weight": 0.7315,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 94.5,
-      "velocity_norm": 0.489,
-      "posterior_score": 0.7971
+      "velocity_norm": 1.0,
+      "posterior_score": 0.925,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -77,8 +81,10 @@
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 28.5,
-      "velocity_norm": 0.127,
-      "posterior_score": 0.7444
+      "velocity_norm": 0.261,
+      "posterior_score": 0.7777,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -109,8 +115,10 @@
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 14.0,
-      "velocity_norm": 0.048,
-      "posterior_score": 0.7245
+      "velocity_norm": 0.099,
+      "posterior_score": 0.7371,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -146,8 +154,10 @@
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 20.667,
-      "velocity_norm": 0.085,
-      "posterior_score": 0.6962
+      "velocity_norm": 0.173,
+      "posterior_score": 0.7183,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -174,7 +184,7 @@
         "is_relevant": true,
         "study_design": "RCT",
         "sample_size": 320,
-        "claim_hyperbole": 1
+        "claim_hyperbole": 2
       },
       "prior_credence": 0.9,
       "rigor_baseline": 4.5,
@@ -183,37 +193,10 @@
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 5.833,
-      "velocity_norm": 0.003,
-      "posterior_score": 0.6759
-    },
-    {
-      "metadata": {
-        "pmid": "41015698",
-        "title": "Mechanisms and therapeutic insights into MASH-associated fibrosis.",
-        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a progressive liver disease posing a major global health concern, closely related to the rising prevalence of obesity. Liver fibrosis is the primary determinant of adverse outcomes in MASH. The increasing worldwide prevalence, economic impact, and adverse outcomes of MASH-associated fibrosis have spurred extensive research to elucidate its pathogenesis and to address its treatment. However, the intricate mechanism driving the transition from metabolic dysfunction to clinically significant fibrosis is not fully understood. Moreover, effective therapies, particularly direct antifibrotic agents, are still lacking, despite the recent approval of resmetirom and semaglutide for MASH-associated fibrosis. Here, we review current insights into the mechanism of MASH-associated fibrosis and provide a comprehensive overview of emerging therapeutic strategies.",
-        "authors": [
-          "Yiwei Zhu",
-          "Bishuang Cai"
-        ],
-        "publication_year": 2026,
-        "citations": 188,
-        "citations_mocked": true
-      },
-      "telemetry": {
-        "is_relevant": true,
-        "study_design": "Review/Opinion",
-        "sample_size": 0,
-        "claim_hyperbole": 1
-      },
-      "prior_credence": 0.15,
-      "rigor_baseline": 0.75,
-      "discrepancy_index": 0.25,
-      "sample_power_weight": 0.0,
-      "discrepancy_adjusted": 0.5,
-      "likelihood_penalty": 1.0,
-      "velocity_raw": 188.0,
-      "velocity_norm": 1.0,
-      "posterior_score": 0.3625
+      "velocity_norm": 0.007,
+      "posterior_score": 0.6768,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -247,15 +230,17 @@
         "sample_size": 0,
         "claim_hyperbole": 2
       },
-      "prior_credence": 0.2,
-      "rigor_baseline": 1.0,
-      "discrepancy_index": 1.0,
+      "prior_credence": 0.15,
+      "rigor_baseline": 0.75,
+      "discrepancy_index": 1.25,
       "sample_power_weight": 0.0,
-      "discrepancy_adjusted": 2.0,
-      "likelihood_penalty": 0.4724,
+      "discrepancy_adjusted": 2.5,
+      "likelihood_penalty": 0.3679,
       "velocity_raw": 5.2,
       "velocity_norm": 0.0,
-      "posterior_score": 0.0709
+      "posterior_score": 0.0414,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     }
   ],
   "top3": [
@@ -285,18 +270,20 @@
       "telemetry": {
         "is_relevant": true,
         "study_design": "RCT",
-        "sample_size": 1197,
-        "claim_hyperbole": 2
+        "sample_size": 800,
+        "claim_hyperbole": 1
       },
       "prior_credence": 0.9,
       "rigor_baseline": 4.5,
       "discrepancy_index": 0.0,
-      "sample_power_weight": 0.7755,
+      "sample_power_weight": 0.7315,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 94.5,
-      "velocity_norm": 0.489,
-      "posterior_score": 0.7971
+      "velocity_norm": 1.0,
+      "posterior_score": 0.925,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -330,8 +317,10 @@
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 28.5,
-      "velocity_norm": 0.127,
-      "posterior_score": 0.7444
+      "velocity_norm": 0.261,
+      "posterior_score": 0.7777,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     },
     {
       "metadata": {
@@ -362,8 +351,10 @@
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
       "velocity_raw": 14.0,
-      "velocity_norm": 0.048,
-      "posterior_score": 0.7245
+      "velocity_norm": 0.099,
+      "posterior_score": 0.7371,
+      "audit_status": "PASSED",
+      "audit_reasons": []
     }
   ],
   "arbiter_verdict": {
@@ -371,19 +362,19 @@
       {
         "pmid": "40305708",
         "rank": 1,
-        "justification": "This paper achieved the top rank with a posterior score of 0.7971, driven by a robust randomized controlled trial study design with a sample size of 1197 and a modest claim hyperbole of 2 out of 5. It benefited from a strong prior credence of 0.90 and a perfect likelihood penalty of 1.0 due to a discrepancy index of zero. Furthermore, its leading position was sealed by a commanding normalized citation velocity of 0.489 that significantly outpaced the other papers."
+        "justification": "This paper secured the top rank primarily due to a maximal citation velocity score of 1.0, which heavily boosted its posterior score despite having a robust study_design of RCT and a sample_size of 800. Its claim_hyperbole was remarkably low at 1/5, ensuring a prior_credence of 0.9 and a perfect likelihood_penalty of 1.0 with no absurdity discount applied. Consequently, the combination of pristine methodological grounding and peer attention propelled it to a final posterior score of 0.925."
       },
       {
         "pmid": "40736113",
         "rank": 2,
-        "justification": "Landing in the second spot with a posterior score of 0.7444, this study utilized a meta-analysis design incorporating a sample size of 1811 and a conservative claim hyperbole of 2 out of 5. It held a slightly higher prior credence of 0.95 and an unpenalized likelihood penalty of 1.0 because its discrepancy index was zero. However, its lower normalized citation velocity of 0.127 prevented it from capturing the top rank despite its strong methodological tier."
+        "justification": "Securing the second rank, this study leveraged a top-tier Meta-Analysis study_design and a large sample_size of 1811 to earn a strong prior_credence of 0.95. Its claim_hyperbole was evaluated at 2/5, yet it still maintained a clean likelihood_penalty of 1.0 with zero discrepancy index penalties. However, a modest velocity_norm of 0.261 limited its final posterior score to 0.7777, placing it just behind the velocity leader."
       },
       {
         "pmid": "39903735",
         "rank": 3,
-        "justification": "Securing the third position with a posterior score of 0.7245, this systematic review and network meta-analysis evaluated a massive sample size of 9324 while maintaining a low claim hyperbole of 2 out of 5. It matched the second-ranked paper with a prior credence of 0.95 and a likelihood penalty of 1.0 owing to a zero discrepancy index. Ultimately, its modest normalized citation velocity of 0.048 relegated it to the lowest score among the three despite its exceptionally high sample power weight."
+        "justification": "This paper claimed the third position supported by an extensive Meta-Analysis study_design and a massive sample_size of 9324, granting it the highest prior_credence of 0.95. The claim_hyperbole was measured at 2/5, yielding a completely unpenalized likelihood_penalty of 1.0. Ultimately, its very low velocity_norm of 0.099 held its posterior score down to 0.7371, leaving it trailing the higher-velocity papers."
       }
     ],
-    "overall_defense": "Citation velocity was the decisive factor separating rank 1 from rank 2 and rank 3, as the methodology and likelihood penalties were virtually identical across all three papers. While the meta-analyses actually held higher prior credences and sample power weights, the top-ranked randomized controlled trial dominated the velocity metric by a wide margin. This outcome is fully defensible because the Bayesian formula purposefully balances rigorous foundational evidence with real-time academic momentum and engagement."
+    "overall_defense": "Citation velocity was the decisive factor separating rank 1 from ranks 2 and 3, as the top paper's velocity_norm of 1.0 completely overshadowed its competitors despite their slightly higher prior credences. Meanwhile, the likelihood and absurdity penalties played no distinguishing role because all three papers maintained a clean likelihood penalty of 1.0 due to controlled hyperbole relative to their strong designs. This ordering is entirely defensible under a balanced Bayesian-velocity framework that rewards high-impact empirical engagement alongside solid clinical methodology."
   }
 }

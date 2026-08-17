@@ -1,12 +1,27 @@
 """
-Sanity checks for Module 3's Bayesian/epistemic state update in agent.py:
-prior credence P(E) -> likelihood penalty L(Absurdity) -> posterior S.
+Sanity checks for:
+  - Module 3's Bayesian/epistemic state update in agent.py: prior credence
+    P(E) -> likelihood penalty L(Absurdity) -> posterior S.
+  - Module 3.5's fail-safe/HITL anomaly gate (detect_anomaly/apply_audit_flags).
+  - graph_memory.py's Empirical Bayesian active learning (Beta hyperparameter
+    updates from simulated human feedback) and contradiction-edge heuristic.
 
-No network, no API keys — pure logic. Run with:
+No network, no API keys — pure logic, and every SQLite test uses a private
+in-memory database (":memory:"), so nothing here touches a real
+epistemic_memory.db on disk. Run with:
     python test_matrix.py
 """
 
-from agent import PaperMetadata, PaperTelemetry, clip01, score_papers
+import graph_memory
+from agent import (
+    ScoredPaper,
+    PaperMetadata,
+    PaperTelemetry,
+    apply_audit_flags,
+    clip01,
+    detect_anomaly,
+    score_papers,
+)
 
 
 def make_case(pmid, design, year, n, citations, hype):
@@ -97,13 +112,33 @@ def test_likelihood_penalty_isolated_from_prior_and_velocity():
 
 
 def test_underclaiming_is_never_penalized():
-    """A cautious claim from a low-rigour design (hype below what the tier
-    could justify) must not trigger any penalty — only overreach is
-    punished, never modesty."""
-    case = make_case("cautious_animal_study", "In-Vitro/Animal", 2024, 10, 5, 1)
+    """A cautious claim from a low-rigour design (hype comfortably below
+    what the tier could justify) must not trigger any penalty — only
+    overreach is punished, never modesty. Uses Retrospective/Observational
+    (baseline = 0.40*5 = 2.0) rather than In-Vitro/Animal here specifically
+    because its baseline is comfortably above hype=1, giving an unambiguous
+    D=0.0 — see test_small_discrepancy_within_threshold_not_penalized below
+    for the tighter, tier-merge-affected case."""
+    case = make_case("cautious_observational", "Retrospective/Observational", 2024, 100, 5, 1)
     scored = score_papers([case])[0]
     assert scored.discrepancy_index == 0.0
     assert scored.likelihood_penalty == 1.0
+
+
+def test_small_discrepancy_within_threshold_not_penalized():
+    """In-Vitro/Animal and Review/Opinion share one Beta tier ("Review/In
+    Vitro", mean 0.15 -> rigor_baseline=0.75), so even the most cautious
+    possible claim (hype=1, the Pydantic field's minimum) technically
+    overshoots that very low baseline by D=0.25. This is real, not a bug —
+    it reflects how little even a modest claim from this evidence tier can
+    be taken at face value. The DISCREPANCY_THRESHOLD (0.5) exists exactly
+    to absorb small gaps like this as noise rather than absurdity: for a
+    single-paper batch (sample_power_weight=0.0), D_adjusted = 0.25*2 =
+    0.5, which is NOT > threshold, so no penalty fires."""
+    case = make_case("cautious_in_vitro", "In-Vitro/Animal", 2024, 10, 5, 1)
+    scored = score_papers([case])[0]
+    assert scored.discrepancy_index > 0.0  # a real, if small, gap
+    assert scored.likelihood_penalty == 1.0  # but still fully forgiven
 
 
 # --------------------------------------------------------------------------
@@ -173,6 +208,174 @@ def test_single_paper_batch_does_not_divide_by_zero():
     scored = score_papers([case])  # should not raise
     assert scored[0].velocity_norm == 0.0
     assert scored[0].sample_power_weight == 0.0
+
+
+# --------------------------------------------------------------------------
+# Module 3.5: fail-safe / HITL anomaly gate.
+# --------------------------------------------------------------------------
+
+
+def test_anomaly_triggers_on_high_discrepancy():
+    """D >= 2.0 alone must flag a paper, regardless of sample size."""
+    cases = [make_case("big_overclaim", "Retrospective/Observational", 2024, 500, 10, 5)]
+    scored = score_papers(cases)
+    is_anomaly, reasons = detect_anomaly(scored[0])
+    assert scored[0].discrepancy_index >= 2.0, scored[0]
+    assert is_anomaly
+    assert any("Discrepancy Index" in r for r in reasons)
+
+
+def test_anomaly_triggers_on_small_interventional_sample():
+    """N < 30 on an interventional (RCT) design alone must flag a paper,
+    even with a perfectly cautious claim (D=0)."""
+    cases = [make_case("tiny_rct", "RCT", 2024, 15, 5, 1)]
+    scored = score_papers(cases)
+    is_anomaly, reasons = detect_anomaly(scored[0])
+    assert scored[0].discrepancy_index == 0.0  # not flagged for overclaiming
+    assert is_anomaly  # but still flagged, for the sample size
+    assert any("N=" in r and "interventional" in r for r in reasons)
+
+
+def test_anomaly_does_not_trigger_on_small_non_interventional_sample():
+    """N < 30 should NOT flag a non-interventional design (e.g. a small
+    in-vitro study) — the sample-size criterion is scoped to interventional
+    trials only, per spec."""
+    cases = [make_case("tiny_in_vitro", "In-Vitro/Animal", 2024, 12, 5, 1)]
+    scored = score_papers(cases)
+    is_anomaly, _ = detect_anomaly(scored[0])
+    assert not is_anomaly
+
+
+def test_anomaly_does_not_trigger_on_ordinary_paper():
+    """A well-powered RCT with a cautious claim should pass clean — the
+    gate must not cry wolf on unremarkable papers."""
+    cases = [make_case("solid_rct", "RCT", 2024, 400, 20, 1)]
+    scored = score_papers(cases)
+    is_anomaly, reasons = detect_anomaly(scored[0])
+    assert not is_anomaly
+    assert reasons == []
+
+
+def test_apply_audit_flags_sets_status_and_reasons():
+    cases = [
+        make_case("flagged_one", "Retrospective/Observational", 2024, 500, 10, 5),  # D>=2.0
+        make_case("clean_one", "Meta-Analysis", 2024, 5000, 10, 1),
+    ]
+    scored = score_papers(cases)
+    apply_audit_flags(scored)
+    by = {p.metadata.pmid: p for p in scored}
+    assert by["flagged_one"].audit_status == "FLAGGED"
+    assert len(by["flagged_one"].audit_reasons) >= 1
+    assert by["clean_one"].audit_status == "PASSED"
+    assert by["clean_one"].audit_reasons == []
+
+
+# --------------------------------------------------------------------------
+# graph_memory.py: Empirical Bayesian active learning over design priors.
+# --------------------------------------------------------------------------
+
+
+def _fresh_db():
+    """A private in-memory SQLite store — isolated per test, never touches
+    a real epistemic_memory.db file on disk."""
+    return graph_memory.init_db(":memory:")
+
+
+def test_beta_seed_means_match_spec():
+    means = graph_memory.seed_prior_means()
+    assert means["Meta-Analysis"] == 19 / 20
+    assert means["Phase III RCT"] == 18 / 20
+    assert means["Phase II RCT"] == 14 / 20
+    assert means["Prospective Cohort"] == 11 / 20
+    assert means["Retrospective"] == 8 / 20
+    assert means["Review/In Vitro"] == 3 / 20
+
+
+def test_beta_tier_for_splits_rct_by_sample_size():
+    assert graph_memory.beta_tier_for("RCT", 500) == "Phase III RCT"
+    assert graph_memory.beta_tier_for("RCT", 50) == "Phase II RCT"
+    assert graph_memory.beta_tier_for("RCT", graph_memory.RCT_PHASE_III_MIN_N) == "Phase III RCT"  # boundary is inclusive
+    assert graph_memory.beta_tier_for("Meta-Analysis", 9999) == "Meta-Analysis"
+    assert graph_memory.beta_tier_for("In-Vitro/Animal", 5) == "Review/In Vitro"
+    assert graph_memory.beta_tier_for("Review/Opinion", 5) == "Review/In Vitro"
+
+
+def test_confirm_feedback_increases_alpha_only():
+    conn = _fresh_db()
+    old_a, old_b = graph_memory.get_current_prior_hyperparams(conn)["Retrospective"]
+    new_a, new_b = graph_memory.record_feedback(conn, tier="Retrospective", action="confirm", pmid="1")
+    assert new_a == old_a + 1.0
+    assert new_b == old_b
+    conn.close()
+
+
+def test_reject_feedback_increases_beta_only():
+    conn = _fresh_db()
+    old_a, old_b = graph_memory.get_current_prior_hyperparams(conn)["Retrospective"]
+    new_a, new_b = graph_memory.record_feedback(conn, tier="Retrospective", action="reject", pmid="1")
+    assert new_a == old_a
+    assert new_b == old_b + 1.0
+    conn.close()
+
+
+def test_override_feedback_shifts_mean_toward_manual_value():
+    """Repeatedly overriding a low-credence tier toward P(E)=1.0 should
+    monotonically increase its Beta mean, without ever exceeding 1.0."""
+    conn = _fresh_db()
+    tier = "Review/In Vitro"  # starts at mean 0.15, the lowest seed tier
+    means = [graph_memory.get_current_prior_means(conn)[tier]]
+    for i in range(5):
+        graph_memory.record_feedback(conn, tier=tier, action="override", manual_p=1.0, pmid=str(i))
+        means.append(graph_memory.get_current_prior_means(conn)[tier])
+    for earlier, later in zip(means, means[1:]):
+        assert later > earlier, means
+    assert means[-1] < 1.0  # nudged, never reset/clamped to the target outright
+    conn.close()
+
+
+def test_feedback_updates_are_persisted_and_isolated_per_tier():
+    """Feedback on one tier must not affect any other tier's hyperparameters."""
+    conn = _fresh_db()
+    before = graph_memory.get_current_prior_hyperparams(conn)
+    graph_memory.record_feedback(conn, tier="Meta-Analysis", action="confirm", pmid="1")
+    after = graph_memory.get_current_prior_hyperparams(conn)
+    assert after["Meta-Analysis"] != before["Meta-Analysis"]
+    for tier in before:
+        if tier != "Meta-Analysis":
+            assert after[tier] == before[tier]
+    conn.close()
+
+
+def test_feedback_log_records_audit_trail():
+    conn = _fresh_db()
+    graph_memory.record_feedback(conn, tier="Retrospective", action="confirm", pmid="42")
+    rows = conn.execute("SELECT pmid, tier, action FROM feedback_log").fetchall()
+    assert rows == [("42", "Retrospective", "confirm")]
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# graph_memory.py: contradiction-edge heuristic.
+# --------------------------------------------------------------------------
+
+
+def test_detect_contradictions_flags_opposing_language():
+    papers = [
+        ("1", "Semaglutide and fibrosis", "significant reduction in fibrosis observed"),
+        ("2", "Semaglutide and fibrosis outcomes", "no significant improvement was observed"),
+        ("3", "Unrelated topic", "neutral text with nothing decisive either way"),
+    ]
+    edges = graph_memory.detect_contradictions(papers)
+    assert len(edges) == 1
+    assert edges[0][:2] == ("1", "2")
+
+
+def test_detect_contradictions_no_edge_when_directions_agree():
+    papers = [
+        ("1", "Study A", "significant improvement was observed"),
+        ("2", "Study B", "significantly improved outcomes were reported"),
+    ]
+    assert graph_memory.detect_contradictions(papers) == []
 
 
 if __name__ == "__main__":

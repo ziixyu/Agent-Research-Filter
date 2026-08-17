@@ -3,3 +3,13 @@ google-genai>=0.3.0
 pydantic>=2.6
 python-dotenv>=1.0
 rich>=13.7
+
+# Persistent knowledge graph + active learning (graph_memory.py)
+networkx>=3.2
+
+# Dashboard (ui.py) — streamlit-agraph is included per spec as an alternative
+# graph-rendering backend; ui.py itself renders via embedded pyvis HTML.
+streamlit>=1.35
+pyvis>=0.3.2
+streamlit-agraph>=0.0.45
+pandas>=2.0
