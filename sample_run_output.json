@@ -1,0 +1,349 @@
+{
+  "generated_at": "2026-08-17T17:56:05.488869",
+  "query": "Semaglutide AND (\"NASH\" OR \"MASH\") AND fibrosis",
+  "model": "gemini-flash-lite-latest",
+  "papers_fetched": 10,
+  "papers_relevant": 7,
+  "papers_dropped_irrelevant": 3,
+  "full_ranking": [
+    {
+      "metadata": {
+        "pmid": "40305708",
+        "title": "Phase 3 Trial of Semaglutide in Metabolic Dysfunction-Associated Steatohepatitis.",
+        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, is a candidate for the treatment of metabolic dysfunction-associated steatohepatitis (MASH). In this ongoing phase 3, multicenter, randomized, double-blind, placebo-controlled trial, we assigned 1197 patients with biopsy-defined MASH and fibrosis stage 2 or 3 in a 2:1 ratio to receive once-weekly subcutaneous semaglutide at a dose of 2.4 mg or placebo for 240 weeks. The results of a planned interim analysis conducted at week 72 involving the first 800 patients are reported here (part 1). The primary end points for part 1 were the resolution of steatohepatitis without worsening of liver fibrosis and reduction in liver fibrosis without worsening of steatohepatitis. Resolution of steatohepatitis without worsening of fibrosis occurred in 62.9% of the 534 patients in the semaglutide group and in 34.3% of the 266 patients in the placebo group (estimated difference, 28.7 percentage points; 95% confidence interval [CI], 21.1 to 36.2; P<0.001). A reduction in liver fibrosis without worsening of steatohepatitis was reported in 36.8% of the patients in the semaglutide group and in 22.4% of those in the placebo group (estimated difference, 14.4 percentage points; 95% CI, 7.5 to 21.3; P<0.001). Results for the three secondary outcomes that were included in the plan to adjust for multiple testing were as follows: combined resolution of steatohepatitis and reduction in liver fibrosis was reported in 32.7% of the patients in the semaglutide group and in 16.1% of those in the placebo group (estimated difference, 16.5 percentage points; 95% CI, 10.2 to 22.8; P<0.001). The mean change in body weight was -10.5% with semaglutide and -2.0% with placebo (estimated difference, -8.5 percentage points; 95% CI, -9.6 to -7.4; P<0.001). Mean changes in bodily pain scores did not differ significantly between the two groups. Gastrointestinal adverse events were more common in the semaglutide group. In patients with MASH and moderate or advanced liver fibrosis, once-weekly semaglutide at a dose of 2.4 mg improved liver histologic results. (Funded by Novo Nordisk; ClinicalTrials.gov number, NCT04822181.).",
+        "authors": [
+          "Arun J Sanyal",
+          "Philip N Newsome",
+          "Iris Kliers",
+          "Laura Harms \u00d8stergaard",
+          "Michelle T Long",
+          "Mette Skalsh\u00f8i Kj\u00e6r",
+          "Anna M G Cali",
+          "Elisabetta Bugianesi",
+          "Mary E Rinella",
+          "Michael Roden",
+          "Vlad Ratziu",
+          "ESSENCE Study Group"
+        ],
+        "publication_year": 2025,
+        "citations": 189,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "RCT",
+        "sample_size": 1197,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 94.5,
+      "velocity_norm": 0.489,
+      "methodology_score": 0.9,
+      "penalty": 0.0,
+      "epistemic_score": 0.7971
+    },
+    {
+      "metadata": {
+        "pmid": "40736113",
+        "title": "Glucagon-Like Peptide-1 Receptor Agonists Improve MASH and Liver Fibrosis: A Meta-Analysis of Randomised Controlled Trials.",
+        "abstract": "There is uncertainty regarding the hepatic efficacy of glucagon-like peptide-1 receptor agonists (GLP-1RAs) in metabolic dysfunction-associated steatotic liver disease (MASLD) or steatohepatitis (MASH). We performed a meta-analysis of randomised controlled trials (RCTs) to examine the efficacy of GLP-1RAs in treating MASLD or MASH. We systematically searched three electronic databases from inception until April 2025 to identify RCTs examining the efficacy of GLP-1RAs for the treatment of MASLD or MASH. The outcome measures included MASH resolution without worsening of fibrosis or improvement in at least one stage of fibrosis without worsening of MASH, along with reductions in liver fat content measured using magnetic resonance-based techniques. Meta-analysis was conducted using random-effects models. We identified 13 phase 2 or phase 3 RCTs (1811 participants). These trials diagnosed MASLD or MASH through liver biopsy (n\u2009=\u20094) or magnetic resonance-based techniques (n\u2009=\u20099). Regardless of diabetes status, among individuals with MASH and moderate-to-advanced fibrosis, GLP-1RAs (especially semaglutide 2.4\u2009mg/week) for up to 72\u2009weeks were superior to placebo in achieving MASH resolution (n\u2009=\u20093 RCTs; pooled random-effects odds ratio 3.48, 95% CI 2.69-4.51; I<sup>2</sup>\u2009=\u20090%), and in improving liver fibrosis (pooled odds ratio 1.79, 95% CI 1.37-2.35; I<sup>2</sup>\u2009=\u20090%). Among individuals with MASH-related compensated cirrhosis (n\u2009=\u20091 RCT available only), semaglutide did not lead to MASH resolution or improved fibrosis compared to placebo. Furthermore, GLP-1RAs reduced magnetic resonance-measured liver fat content (n\u2009=\u20099; pooled mean difference: -4.50%, 95% CI -6.60 to -2.40%; I<sup>2</sup>\u2009=\u200995.9%). GLP-1RAs are a promising treatment option for MASLD or MASH. Further research is needed to evaluate the long-term effects of GLP-1RAs on liver-related clinical events.",
+        "authors": [
+          "Alessandro Mantovani",
+          "Riccardo Morandin",
+          "Veronica Fiorio",
+          "Maria Giovanna Lando",
+          "Norbert Stefan",
+          "Herbert Tilg",
+          "Christopher D Byrne",
+          "Giovanni Targher"
+        ],
+        "publication_year": 2025,
+        "citations": 57,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Meta-Analysis",
+        "sample_size": 1811,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 28.5,
+      "velocity_norm": 0.127,
+      "methodology_score": 1.0,
+      "penalty": 0.0,
+      "epistemic_score": 0.7819
+    },
+    {
+      "metadata": {
+        "pmid": "39903735",
+        "title": "Comparison of pharmacological therapies in metabolic dysfunction-associated steatohepatitis for fibrosis regression and MASH resolution: Systematic review and network meta-analysis.",
+        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a leading cause of liver disease. With the advent of multiple therapeutic targets in late-phase clinical drug development for MASH, there is a knowledge gap to better understand the comparative efficacy of various pharmacological agents. We conducted an updated network meta-analysis to evaluate the relative rank order of the different pharmacological agents for both fibrosis regression and MASH resolution. We searched PubMed and Embase databases from January 1, 2020 to December 1, 2024, for published randomized controlled trials comparing pharmacological interventions in patients with biopsy-proven MASH. The co-primary endpoints were fibrosis improvement \u22651 stage without MASH worsening and MASH resolution without worsening fibrosis. We conducted surface under the cumulative ranking curve (SUCRA) analysis. A total of 29 randomized controlled trials (n=9324) were included. Pegozafermin, cilofexor + firsocostat, denifanstat, survodutide, obeticholic acid, tirzepatide, resmetirom, and semaglutide were significantly better than placebo in achieving fibrosis regression without worsening MASH. Pegozafermin (SUCRA: 79.92), cilofexor + firsocostat (SUCRA: 71.38), and cilofexor + selonsertib (SUCRA: 69.11) were ranked the most effective interventions. Pegozafermin, survodutide, tirzepatide, efruxifermin, liraglutide, vitamin E + pioglitazone, resmetirom, semaglutide, pioglitazone, denifanstat, semaglutide, and lanifibranor were significantly better than placebo in achieving MASH resolution without worsening fibrosis. Pegozafermin (SUCRA: 91.75), survodutide (SUCRA: 90.87), and tirzepatide (SUCRA: 84.70) were ranked the most effective interventions for achieving MASH resolution without worsening fibrosis. This study provides updated rank-order efficacy of MASH pharmacological therapies for fibrosis regression and MASH resolution. These data are helpful to inform practice and clinical trial design.",
+        "authors": [
+          "Matheus Souza",
+          "Lubna Al-Sharif",
+          "Vanio L J Antunes",
+          "Daniel Q Huang",
+          "Rohit Loomba"
+        ],
+        "publication_year": 2025,
+        "citations": 28,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Meta-Analysis",
+        "sample_size": 9324,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 14.0,
+      "velocity_norm": 0.048,
+      "methodology_score": 1.0,
+      "penalty": 0.0,
+      "epistemic_score": 0.762
+    },
+    {
+      "metadata": {
+        "pmid": "39412509",
+        "title": "Semaglutide 2.4\u2009mg in Participants With Metabolic Dysfunction-Associated Steatohepatitis: Baseline Characteristics and Design of the Phase 3 ESSENCE Trial.",
+        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, has demonstrated potential beneficial effects in metabolic dysfunction-associated steatohepatitis (MASH). To describe the trial design and baseline characteristics of the 'Effect of Semaglutide in Subjects with Non-cirrhotic Non-alcoholic Steatohepatitis' (ESSENCE) trial (NCT04822181). ESSENCE is a two-part, phase 3, randomised, multicentre trial evaluating the effect of subcutaneous semaglutide 2.4\u2009mg in participants with biopsy-proven MASH and fibrosis stage 2 or 3. The primary objective of Part 1 is to demonstrate that semaglutide improves liver histology compared with placebo. The two primary endpoints are: resolution of steatohepatitis and no worsening of liver fibrosis, and improvement in liver fibrosis and no worsening of steatohepatitis. The Part 2 objective is based on clinical outcomes. The current work reports baseline characteristics of the first 800 randomised participants which includes demographics, laboratory parameters, liver histology, non-invasive tests and presence of metabolic dysfunction-associated steatotic liver disease (MASLD) cardiometabolic criteria. Of 800 participants, 250 (31.3%) had fibrosis stage 2 and 550 (68.8%) had fibrosis stage 3. In the overall population, mean (standard deviation [SD]) age was 56 (11.6) years, 57.1% were female, mean (SD) body mass index was 34.6 (7.2) kg/m<sup>2</sup>, 55.5% had type 2 diabetes and >\u200999% had at least one MASLD cardiometabolic criterion according to the published definition. The ESSENCE baseline population includes participants with clinically significant fibrosis stages 2 and 3. Although MASLD cardiometabolic criteria were not a requirement for study enrolment, almost all participants (>\u200999%) had at least one MASLD cardiometabolic criterion. NCT04822181.",
+        "authors": [
+          "Philip N Newsome",
+          "Arun J Sanyal",
+          "Kristiane A Engebretsen",
+          "Iris Kliers",
+          "Laura \u00d8stergaard",
+          "Denise Vanni",
+          "Elisabetta Bugianesi",
+          "Mary E Rinella",
+          "Michael Roden",
+          "Vlad Ratziu"
+        ],
+        "publication_year": 2024,
+        "citations": 62,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "RCT",
+        "sample_size": 800,
+        "claim_hyperbole": 1
+      },
+      "velocity_raw": 20.667,
+      "velocity_norm": 0.085,
+      "methodology_score": 0.9,
+      "penalty": 0.0,
+      "epistemic_score": 0.6962
+    },
+    {
+      "metadata": {
+        "pmid": "33185364",
+        "title": "A Placebo-Controlled Trial of Subcutaneous Semaglutide in Nonalcoholic Steatohepatitis.",
+        "abstract": "Nonalcoholic steatohepatitis (NASH) is a common disease that is associated with increased morbidity and mortality, but treatment options are limited. The efficacy and safety of the glucagon-like peptide-1 receptor agonist semaglutide in patients with NASH is not known. We conducted a 72-week, double-blind phase 2 trial involving patients with biopsy-confirmed NASH and liver fibrosis of stage F1, F2, or F3. Patients were randomly assigned, in a 3:3:3:1:1:1 ratio, to receive once-daily subcutaneous semaglutide at a dose of 0.1, 0.2, or 0.4 mg or corresponding placebo. The primary end point was resolution of NASH with no worsening of fibrosis. The confirmatory secondary end point was an improvement of at least one fibrosis stage with no worsening of NASH. The analyses of these end points were performed only in patients with stage F2 or F3 fibrosis; other analyses were performed in all the patients. In total, 320 patients (of whom 230 had stage F2 or F3 fibrosis) were randomly assigned to receive semaglutide at a dose of 0.1 mg (80 patients), 0.2 mg (78 patients), or 0.4 mg (82 patients) or to receive placebo (80 patients). The percentage of patients in whom NASH resolution was achieved with no worsening of fibrosis was 40% in the 0.1-mg group, 36% in the 0.2-mg group, 59% in the 0.4-mg group, and 17% in the placebo group (P<0.001 for semaglutide 0.4 mg vs. placebo). An improvement in fibrosis stage occurred in 43% of the patients in the 0.4-mg group and in 33% of the patients in the placebo group (P\u2009=\u20090.48). The mean percent weight loss was 13% in the 0.4-mg group and 1% in the placebo group. The incidence of nausea, constipation, and vomiting was higher in the 0.4-mg group than in the placebo group (nausea, 42% vs. 11%; constipation, 22% vs. 12%; and vomiting, 15% vs. 2%). Malignant neoplasms were reported in 3 patients who received semaglutide (1%) and in no patients who received placebo. Overall, neoplasms (benign, malignant, or unspecified) were reported in 15% of the patients in the semaglutide groups and in 8% in the placebo group; no pattern of occurrence in specific organs was observed. This phase 2 trial involving patients with NASH showed that treatment with semaglutide resulted in a significantly higher percentage of patients with NASH resolution than placebo. However, the trial did not show a significant between-group difference in the percentage of patients with an improvement in fibrosis stage. (Funded by Novo Nordisk; ClinicalTrials.gov number, NCT02970942.).",
+        "authors": [
+          "Philip N Newsome",
+          "Kristine Buchholtz",
+          "Kenneth Cusi",
+          "Martin Linder",
+          "Takeshi Okanoue",
+          "Vlad Ratziu",
+          "Arun J Sanyal",
+          "Anne-Sophie Sejling",
+          "Stephen A Harrison",
+          "NN9931-4296 Investigators"
+        ],
+        "publication_year": 2021,
+        "citations": 35,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "RCT",
+        "sample_size": 320,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 5.833,
+      "velocity_norm": 0.003,
+      "methodology_score": 0.9,
+      "penalty": 0.0,
+      "epistemic_score": 0.6759
+    },
+    {
+      "metadata": {
+        "pmid": "41015698",
+        "title": "Mechanisms and therapeutic insights into MASH-associated fibrosis.",
+        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a progressive liver disease posing a major global health concern, closely related to the rising prevalence of obesity. Liver fibrosis is the primary determinant of adverse outcomes in MASH. The increasing worldwide prevalence, economic impact, and adverse outcomes of MASH-associated fibrosis have spurred extensive research to elucidate its pathogenesis and to address its treatment. However, the intricate mechanism driving the transition from metabolic dysfunction to clinically significant fibrosis is not fully understood. Moreover, effective therapies, particularly direct antifibrotic agents, are still lacking, despite the recent approval of resmetirom and semaglutide for MASH-associated fibrosis. Here, we review current insights into the mechanism of MASH-associated fibrosis and provide a comprehensive overview of emerging therapeutic strategies.",
+        "authors": [
+          "Yiwei Zhu",
+          "Bishuang Cai"
+        ],
+        "publication_year": 2026,
+        "citations": 188,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Review/Opinion",
+        "sample_size": 0,
+        "claim_hyperbole": 1
+      },
+      "velocity_raw": 188.0,
+      "velocity_norm": 1.0,
+      "methodology_score": 0.1,
+      "penalty": 0.0,
+      "epistemic_score": 0.325
+    },
+    {
+      "metadata": {
+        "pmid": "35143711",
+        "title": "Hepatoprotective effects of semaglutide, lanifibranor and dietary intervention in the GAN diet-induced obese and biopsy-confirmed mouse model of NASH.",
+        "abstract": "Non-alcoholic steatohepatitis (NASH) has emerged as a major challenge for public health because of high global prevalence and lack of evidence-based therapies. Most animal models of NASH lack sufficient validation regarding disease progression and pharmacological treatment. The Gubra-Amylin NASH (GAN) diet-induced obese (DIO) mouse demonstrate clinical translatability with respect to disease etiology and hallmarks of NASH. This study aimed to evaluate disease progression and responsiveness to clinically effective interventions in GAN DIO-NASH mice. Disease phenotyping was performed in male C57BL/6J mice fed the GAN diet high in fat, fructose, and cholesterol for 28-88\u00a0weeks. GAN DIO-NASH mice with biopsy-confirmed NASH and fibrosis received low-caloric dietary intervention, semaglutide (30\u00a0nmol/kg/day, s.c.) or lanifibranor (30\u00a0mg/kg/day, p.o.) for 8 and 12\u00a0weeks, respectively. Within-subject change in nonalcoholic fatty liver disease (NAFLD) Activity Score (NAS) and fibrosis stage was evaluated using automated deep learning-based image analysis. GAN DIO-NASH mice showed clear and reproducible progression in NASH, fibrosis stage, and tumor burden with high incidence of hepatocellular carcinoma. Consistent with clinical trial outcomes, semaglutide and lanifibranor improved NAS, whereas only lanifibranor induced regression in the fibrosis stage. Dietary intervention also demonstrated substantial benefits on metabolic outcomes and liver histology. Differential therapeutic efficacy of semaglutide, lanifibranor, and dietary intervention was supported by quantitative histology, RNA sequencing, and blood/liver biochemistry. In conclusion, the GAN DIO-NASH mouse model recapitulates various histological stages of NASH and faithfully reproduces histological efficacy profiles of compounds in advanced clinical development for NASH. Collectively, these features highlight the utility of GAN DIO-NASH mice in preclinical drug development.",
+        "authors": [
+          "Mathias B M\u00f8llerh\u00f8j",
+          "Sanne S Veidal",
+          "Kirstine T\u00f8lb\u00f8l Thrane",
+          "Denise Or\u00f3",
+          "Agnete Overgaard",
+          "Casper Gravesen Salinas",
+          "Martin R\u00f8nn Madsen",
+          "Larissa Pfisterer",
+          "Mogens Vyberg",
+          "Eric Simon",
+          "Andre Broermann",
+          "Niels Vrang",
+          "Jacob Jelsing",
+          "Michael Feigh",
+          "Henrik H Hansen"
+        ],
+        "publication_year": 2022,
+        "citations": 26,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "In-Vitro/Animal",
+        "sample_size": 0,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 5.2,
+      "velocity_norm": 0.0,
+      "methodology_score": 0.3,
+      "penalty": 0.0,
+      "epistemic_score": 0.225
+    }
+  ],
+  "top3": [
+    {
+      "metadata": {
+        "pmid": "40305708",
+        "title": "Phase 3 Trial of Semaglutide in Metabolic Dysfunction-Associated Steatohepatitis.",
+        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, is a candidate for the treatment of metabolic dysfunction-associated steatohepatitis (MASH). In this ongoing phase 3, multicenter, randomized, double-blind, placebo-controlled trial, we assigned 1197 patients with biopsy-defined MASH and fibrosis stage 2 or 3 in a 2:1 ratio to receive once-weekly subcutaneous semaglutide at a dose of 2.4 mg or placebo for 240 weeks. The results of a planned interim analysis conducted at week 72 involving the first 800 patients are reported here (part 1). The primary end points for part 1 were the resolution of steatohepatitis without worsening of liver fibrosis and reduction in liver fibrosis without worsening of steatohepatitis. Resolution of steatohepatitis without worsening of fibrosis occurred in 62.9% of the 534 patients in the semaglutide group and in 34.3% of the 266 patients in the placebo group (estimated difference, 28.7 percentage points; 95% confidence interval [CI], 21.1 to 36.2; P<0.001). A reduction in liver fibrosis without worsening of steatohepatitis was reported in 36.8% of the patients in the semaglutide group and in 22.4% of those in the placebo group (estimated difference, 14.4 percentage points; 95% CI, 7.5 to 21.3; P<0.001). Results for the three secondary outcomes that were included in the plan to adjust for multiple testing were as follows: combined resolution of steatohepatitis and reduction in liver fibrosis was reported in 32.7% of the patients in the semaglutide group and in 16.1% of those in the placebo group (estimated difference, 16.5 percentage points; 95% CI, 10.2 to 22.8; P<0.001). The mean change in body weight was -10.5% with semaglutide and -2.0% with placebo (estimated difference, -8.5 percentage points; 95% CI, -9.6 to -7.4; P<0.001). Mean changes in bodily pain scores did not differ significantly between the two groups. Gastrointestinal adverse events were more common in the semaglutide group. In patients with MASH and moderate or advanced liver fibrosis, once-weekly semaglutide at a dose of 2.4 mg improved liver histologic results. (Funded by Novo Nordisk; ClinicalTrials.gov number, NCT04822181.).",
+        "authors": [
+          "Arun J Sanyal",
+          "Philip N Newsome",
+          "Iris Kliers",
+          "Laura Harms \u00d8stergaard",
+          "Michelle T Long",
+          "Mette Skalsh\u00f8i Kj\u00e6r",
+          "Anna M G Cali",
+          "Elisabetta Bugianesi",
+          "Mary E Rinella",
+          "Michael Roden",
+          "Vlad Ratziu",
+          "ESSENCE Study Group"
+        ],
+        "publication_year": 2025,
+        "citations": 189,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "RCT",
+        "sample_size": 1197,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 94.5,
+      "velocity_norm": 0.489,
+      "methodology_score": 0.9,
+      "penalty": 0.0,
+      "epistemic_score": 0.7971
+    },
+    {
+      "metadata": {
+        "pmid": "40736113",
+        "title": "Glucagon-Like Peptide-1 Receptor Agonists Improve MASH and Liver Fibrosis: A Meta-Analysis of Randomised Controlled Trials.",
+        "abstract": "There is uncertainty regarding the hepatic efficacy of glucagon-like peptide-1 receptor agonists (GLP-1RAs) in metabolic dysfunction-associated steatotic liver disease (MASLD) or steatohepatitis (MASH). We performed a meta-analysis of randomised controlled trials (RCTs) to examine the efficacy of GLP-1RAs in treating MASLD or MASH. We systematically searched three electronic databases from inception until April 2025 to identify RCTs examining the efficacy of GLP-1RAs for the treatment of MASLD or MASH. The outcome measures included MASH resolution without worsening of fibrosis or improvement in at least one stage of fibrosis without worsening of MASH, along with reductions in liver fat content measured using magnetic resonance-based techniques. Meta-analysis was conducted using random-effects models. We identified 13 phase 2 or phase 3 RCTs (1811 participants). These trials diagnosed MASLD or MASH through liver biopsy (n\u2009=\u20094) or magnetic resonance-based techniques (n\u2009=\u20099). Regardless of diabetes status, among individuals with MASH and moderate-to-advanced fibrosis, GLP-1RAs (especially semaglutide 2.4\u2009mg/week) for up to 72\u2009weeks were superior to placebo in achieving MASH resolution (n\u2009=\u20093 RCTs; pooled random-effects odds ratio 3.48, 95% CI 2.69-4.51; I<sup>2</sup>\u2009=\u20090%), and in improving liver fibrosis (pooled odds ratio 1.79, 95% CI 1.37-2.35; I<sup>2</sup>\u2009=\u20090%). Among individuals with MASH-related compensated cirrhosis (n\u2009=\u20091 RCT available only), semaglutide did not lead to MASH resolution or improved fibrosis compared to placebo. Furthermore, GLP-1RAs reduced magnetic resonance-measured liver fat content (n\u2009=\u20099; pooled mean difference: -4.50%, 95% CI -6.60 to -2.40%; I<sup>2</sup>\u2009=\u200995.9%). GLP-1RAs are a promising treatment option for MASLD or MASH. Further research is needed to evaluate the long-term effects of GLP-1RAs on liver-related clinical events.",
+        "authors": [
+          "Alessandro Mantovani",
+          "Riccardo Morandin",
+          "Veronica Fiorio",
+          "Maria Giovanna Lando",
+          "Norbert Stefan",
+          "Herbert Tilg",
+          "Christopher D Byrne",
+          "Giovanni Targher"
+        ],
+        "publication_year": 2025,
+        "citations": 57,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Meta-Analysis",
+        "sample_size": 1811,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 28.5,
+      "velocity_norm": 0.127,
+      "methodology_score": 1.0,
+      "penalty": 0.0,
+      "epistemic_score": 0.7819
+    },
+    {
+      "metadata": {
+        "pmid": "39903735",
+        "title": "Comparison of pharmacological therapies in metabolic dysfunction-associated steatohepatitis for fibrosis regression and MASH resolution: Systematic review and network meta-analysis.",
+        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a leading cause of liver disease. With the advent of multiple therapeutic targets in late-phase clinical drug development for MASH, there is a knowledge gap to better understand the comparative efficacy of various pharmacological agents. We conducted an updated network meta-analysis to evaluate the relative rank order of the different pharmacological agents for both fibrosis regression and MASH resolution. We searched PubMed and Embase databases from January 1, 2020 to December 1, 2024, for published randomized controlled trials comparing pharmacological interventions in patients with biopsy-proven MASH. The co-primary endpoints were fibrosis improvement \u22651 stage without MASH worsening and MASH resolution without worsening fibrosis. We conducted surface under the cumulative ranking curve (SUCRA) analysis. A total of 29 randomized controlled trials (n=9324) were included. Pegozafermin, cilofexor + firsocostat, denifanstat, survodutide, obeticholic acid, tirzepatide, resmetirom, and semaglutide were significantly better than placebo in achieving fibrosis regression without worsening MASH. Pegozafermin (SUCRA: 79.92), cilofexor + firsocostat (SUCRA: 71.38), and cilofexor + selonsertib (SUCRA: 69.11) were ranked the most effective interventions. Pegozafermin, survodutide, tirzepatide, efruxifermin, liraglutide, vitamin E + pioglitazone, resmetirom, semaglutide, pioglitazone, denifanstat, semaglutide, and lanifibranor were significantly better than placebo in achieving MASH resolution without worsening fibrosis. Pegozafermin (SUCRA: 91.75), survodutide (SUCRA: 90.87), and tirzepatide (SUCRA: 84.70) were ranked the most effective interventions for achieving MASH resolution without worsening fibrosis. This study provides updated rank-order efficacy of MASH pharmacological therapies for fibrosis regression and MASH resolution. These data are helpful to inform practice and clinical trial design.",
+        "authors": [
+          "Matheus Souza",
+          "Lubna Al-Sharif",
+          "Vanio L J Antunes",
+          "Daniel Q Huang",
+          "Rohit Loomba"
+        ],
+        "publication_year": 2025,
+        "citations": 28,
+        "citations_mocked": true
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Meta-Analysis",
+        "sample_size": 9324,
+        "claim_hyperbole": 2
+      },
+      "velocity_raw": 14.0,
+      "velocity_norm": 0.048,
+      "methodology_score": 1.0,
+      "penalty": 0.0,
+      "epistemic_score": 0.762
+    }
+  ],
+  "arbiter_verdict": {
+    "justifications": [
+      {
+        "pmid": "40305708",
+        "rank": 1,
+        "justification": "This paper secured the top rank primarily due to its robust methodology score of 0.9 and a strong velocity normalization of 0.489, yielding a leading epistemic score of 0.7971. Operating as an RCT with a substantial sample size of 1197 participants, it maintained a modest claim hyperbole of 2/5, completely avoiding the hype penalty. These combined telemetry metrics successfully balanced high-tier experimental design with superior citation velocity to claim the first position."
+      },
+      {
+        "pmid": "40736113",
+        "rank": 2,
+        "justification": "Achieving the second position, this study attained a perfect methodology score of 1.0 and a moderate sample size of 1811 within a rigorous Meta-Analysis design. Its claim hyperbole remained strictly controlled at 2/5, resulting in a zero penalty and a final epistemic score of 0.7819. Although its methodology was superior, a lower velocity normalization of 0.127 kept it just behind the top-ranked clinical trial."
+      },
+      {
+        "pmid": "39903735",
+        "rank": 3,
+        "justification": "Landing in the third spot, this extensive systematic review and network meta-analysis evaluated a massive sample size of 9324 while scoring a flawless 1.0 in methodology. Despite this high empirical ceiling, a very low velocity normalization of 0.048 and a zero-penalty claim hyperbole of 2/5 resulted in a final epistemic score of 0.762. The deterministic formula weighed citation velocity enough to position this massive meta-analysis just beneath the higher-velocity trials."
+      }
+    ],
+    "overall_defense": "Citation velocity was the decisive factor that separated rank 1 from rank 2, as the top paper leveraged a notably higher velocity norm of 0.489 compared to rank 2's 0.127 despite having a slightly lower methodology score. Conversely, velocity also separated rank 2 from rank 3, where both papers shared a maximum methodology score of 1.0 but differed in their velocity contributions. This outcome demonstrates that while methodological rigor anchors the scoring foundation, velocity acts as the primary differentiator among top-tier designs."
+  }
+}
