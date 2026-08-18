@@ -356,6 +356,75 @@ def register_novel_tier(conn: sqlite3.Connection, tier: str, trigger_source: str
     return tuple(row)
 
 
+def set_prior_hyperparams(
+    conn: sqlite3.Connection, tier: str, alpha: float, beta: float, trigger_source: str = "import"
+) -> None:
+    """Directly overwrite one tier's Beta(alpha, beta) — used by the prior
+    state management controls (ui.py Tab 2: import/reset), NOT by ordinary
+    feedback (see record_feedback() for the pseudo-count update path human
+    decisions and the surrogate/calibration engine actually go through).
+    Snapshots the result into calibration_history like every other
+    prior-affecting write, so an import/reset is visible on the convergence
+    chart same as any other update."""
+    conn.execute(
+        "INSERT INTO design_priors (tier, alpha, beta) VALUES (?, ?, ?) "
+        "ON CONFLICT(tier) DO UPDATE SET alpha = excluded.alpha, beta = excluded.beta",
+        (tier, alpha, beta),
+    )
+    conn.commit()
+    _snapshot_calibration(conn, tier, alpha, beta, trigger_source)
+
+
+def export_priors(conn: sqlite3.Connection) -> dict:
+    """Serializes the full design_priors table — alpha, beta, and the
+    derived expected credence for every tier (seeded and dynamically
+    registered OOD tiers alike) — to a plain JSON-able dict. ui.py's
+    "Export Priors to JSON" button just json.dumps()'s this."""
+    rows = conn.execute("SELECT tier, alpha, beta FROM design_priors ORDER BY tier").fetchall()
+    return {
+        "exported_at": _now(),
+        "tiers": {
+            tier: {"alpha": alpha, "beta": beta, "expected_credence": alpha / (alpha + beta)}
+            for tier, alpha, beta in rows
+        },
+    }
+
+
+def import_priors(conn: sqlite3.Connection, payload: dict, trigger_source: str = "import") -> int:
+    """Restores design_priors from a dict shaped like export_priors()'s
+    output ({"tiers": {tier: {"alpha":.., "beta":..}}}); a bare
+    {tier: {"alpha":.., "beta":..}} mapping (no "tiers" wrapper) is also
+    accepted so a hand-edited checkpoint still loads. Rows with a
+    non-positive alpha/beta are skipped rather than corrupting a Beta
+    distribution's support. Returns the number of tiers actually updated.
+    Tiers absent from the payload are left untouched (this restores/merges,
+    it does not delete)."""
+    tiers = payload.get("tiers", payload) if isinstance(payload, dict) else {}
+    updated = 0
+    for tier, vals in tiers.items():
+        try:
+            alpha, beta = float(vals["alpha"]), float(vals["beta"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if alpha <= 0 or beta <= 0:
+            continue
+        set_prior_hyperparams(conn, tier, alpha, beta, trigger_source=trigger_source)
+        updated += 1
+    return updated
+
+
+def reset_priors_to_default(conn: sqlite3.Connection, trigger_source: str = "reset") -> int:
+    """Resets every originally-seeded tier's Beta(alpha, beta) back to
+    SEED_BETA_PRIORS, snapshotting each into calibration_history so the
+    reset is visible as a discontinuity on the convergence chart rather
+    than silently rewriting history. Dynamically-registered OOD tiers are
+    left as-is — they have no seed value to reset to by definition. Returns
+    the number of tiers reset."""
+    for tier, (a, b) in SEED_BETA_PRIORS.items():
+        set_prior_hyperparams(conn, tier, a, b, trigger_source=trigger_source)
+    return len(SEED_BETA_PRIORS)
+
+
 def get_prior_credence(conn: sqlite3.Connection, study_design: str, sample_size: int) -> float:
     """Live, DB-backed prior lookup for ONE paper: resolve to a Beta tier
     via beta_tier_for(), and if that tier doesn't exist in the store yet —
@@ -526,6 +595,87 @@ class SurrogateOperator:
         best_idx = int(proba.argmax())
         label = int(self.model.classes_[best_idx])
         return label, self.LABEL_NAMES[label], float(proba[best_idx])
+
+
+# --------------------------------------------------------------------------
+# Graph rendering calibration — pure, network/UI-free color and size
+# mappings shared by ui.py's pyvis rendering AND test_matrix.py (a single
+# source of truth instead of a value dict mirrored/hand-copied into the
+# dashboard, which is how a color-spec typo would previously go untested).
+# --------------------------------------------------------------------------
+
+# Node diameter is strictly proportional to S_posterior: Radius = 12 + 28*S.
+# S_posterior is already clip01()-bounded to [0,1] by construction, so this
+# maps to a [12, 40] pixel radius with no additional clamping needed.
+NODE_RADIUS_BASE = 12.0
+NODE_RADIUS_SCALE = 28.0
+
+
+def node_radius(posterior_score: Optional[float]) -> float:
+    s = max(0.0, min(1.0, posterior_score or 0.0))
+    return NODE_RADIUS_BASE + NODE_RADIUS_SCALE * s
+
+
+# Node fill is a continuous luminance gradient over log10(N+1): light
+# silver/slate at N≈0 up to deep electric blue at N>=2000 (clamped beyond
+# that ceiling so one N=100000 outlier can't wash out the rest of a batch).
+NODE_COLOR_LOW = (0xCB, 0xD5, 0xE1)  # #CBD5E1 — low sample power
+NODE_COLOR_HIGH = (0x02, 0x84, 0xC7)  # #0284C7 — high sample power
+NODE_COLOR_N_CEILING = 2000
+
+
+def node_fill_color(sample_size: Optional[float]) -> str:
+    import math
+
+    n = max(0.0, sample_size or 0.0)
+    t = math.log10(n + 1) / math.log10(NODE_COLOR_N_CEILING + 1)
+    t = max(0.0, min(1.0, t))
+    rgb = tuple(round(lo + t * (hi - lo)) for lo, hi in zip(NODE_COLOR_LOW, NODE_COLOR_HIGH))
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+
+# Node border encodes a categorical flag, not a continuous value, so it's a
+# small lookup rather than a gradient. Quarantine is checked first when a
+# node qualifies for more than one flag: an active anomaly is the single
+# most actionable signal a reviewer can get from border color alone, ahead
+# of OOD design or preregistration.
+NODE_BORDER_STYLE = {
+    "preregistered": {"color": "#10B981", "width": 3, "dashes": False},
+    "ood": {"color": "#8B5CF6", "width": 3, "dashes": False},
+    "quarantined": {"color": "#EF4444", "width": 3, "dashes": True},
+    "default": {"color": "#334155", "width": 1, "dashes": False},
+}
+
+
+def node_border_style(
+    *, is_preregistered: bool = False, is_ood: bool = False, is_quarantined: bool = False
+) -> dict:
+    if is_quarantined:
+        return NODE_BORDER_STYLE["quarantined"]
+    if is_ood:
+        return NODE_BORDER_STYLE["ood"]
+    if is_preregistered:
+        return NODE_BORDER_STYLE["preregistered"]
+    return NODE_BORDER_STYLE["default"]
+
+
+# Signed directed citation/contradiction edges — exact spec: SUPPORTING
+# solid emerald green width=2, MENTION slate gray width=1, REFUTING bold
+# red dashed width=3 (an unconditional contradiction edge is REFUTING too).
+EDGE_STYLE = {
+    "SUPPORTING": {"color": "#10B981", "width": 2, "dashes": False},
+    "MENTION": {"color": "#64748B", "width": 1, "dashes": False},
+    "REFUTING": {"color": "#EF4444", "width": 3, "dashes": True},
+}
+
+
+def edge_style_for(edge_type: str, sentiment: Optional[str]) -> dict:
+    """Resolve one edge's (edge_type, sentiment) pair to its EDGE_STYLE
+    entry — a contradiction edge is unconditionally REFUTING regardless of
+    its own sentiment column; a citation edge with no sentiment on file
+    defaults to MENTION rather than crashing on a dict lookup."""
+    resolved = "REFUTING" if edge_type == "contradiction" else (sentiment or "MENTION")
+    return EDGE_STYLE.get(resolved, EDGE_STYLE["MENTION"])
 
 
 # --------------------------------------------------------------------------

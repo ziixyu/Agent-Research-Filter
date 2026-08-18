@@ -5,31 +5,38 @@ ui.py — Interactive Streamlit dashboard for the Epistemic Filtering Agent.
 Run:
     streamlit run ui.py
 
-This is a READ + LIVE-RECOMPUTE surface over a run agent.py already
-produced (run_output.json / sample_run_output.json) plus the persistent
-knowledge graph (epistemic_memory.db). It never re-calls PubMed. The
-Methodology/Velocity weight sliders recompute posterior scores locally,
-from already-extracted telemetry, using the exact same `agent.score_one()`
-math the CLI pipeline uses — no duplicated formula to drift out of sync.
+Two ingestion modes, selected in the sidebar:
+    - "Live PubMed Search" drives agent.py's real run_pipeline() in-process
+      (Entrez fetch -> Gemini extraction -> Bayesian scoring -> fail-safe ->
+      arbiter -> knowledge-graph persistence), with an st.progress() bar.
+    - "Load Cached Run" reads a previously-saved run_output.json/
+      sample_run_output.json checkpoint — the original read-only mode.
+
+Either way, the Methodology ($w_M$)/Velocity ($w_V$) sliders recompute
+posterior scores locally, from already-extracted telemetry, using the exact
+same `agent.score_one()` math the pipeline uses — no duplicated formula to
+drift out of sync.
 
 Two tabs:
-    1. "Epistemic Matrix & Knowledge Graph" — live ranking, physics graph
-       with signed citation topology, and the Async Audit Queue / Surrogate
-       Inspector for agent.py's non-blocking fail-safe.
-    2. "Empirical Prior Convergence & Calibration" — a per-tier convergence
-       chart over calibration_history, plus a console that runs
-       backtest_calibration.py's adversarial calibration loop live.
+    1. "Paper Ranking & Knowledge Graph" — the ranking matrix, a
+       physics-stabilized signed knowledge graph, the async Audit &
+       Exceptions Queue for agent.py's non-blocking fail-safe, and the LLM
+       Synthesis & Arbitration console.
+    2. "Empirical Prior Convergence & State Calibration" — a per-tier
+       convergence chart over calibration_history, a console that runs
+       backtest_calibration.py's adversarial calibration loop live, and
+       Prior Calibration State Management (export / import / reset).
 
-Gemini is called live in exactly two places: the counterfactual arbiter
-console (Tab 1) and the calibration console (Tab 2, via backtest_calibration).
-Both reuse agent.py's retry-wrapped client — nothing here re-implements
-the Gemini calling convention.
+Gemini is called live in three places: the "Live PubMed Search" pipeline
+(Tab-independent, sidebar), the counterfactual arbiter console (Tab 1), and
+the calibration console (Tab 2, via backtest_calibration). All three reuse
+agent.py's retry-wrapped client — nothing here re-implements the Gemini
+calling convention.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
 from pathlib import Path
 
@@ -39,9 +46,13 @@ import streamlit as st
 import agent
 import graph_memory
 
-st.set_page_config(page_title="Epistemic Filtering Agent", layout="wide", page_icon="🧬")
+st.set_page_config(
+    page_title="Research Paper Filter — Epistemic Bayesian Ranking Engine",
+    layout="wide",
+)
 
 DB_PATH = graph_memory.DB_PATH_DEFAULT
+DEFAULT_LIVE_QUERY = 'Semaglutide AND (MASH OR NASH) AND fibrosis'
 
 
 # --------------------------------------------------------------------------
@@ -55,12 +66,6 @@ def load_run(path: str) -> dict:
         return json.load(f)
 
 
-def available_run_files() -> list[str]:
-    candidates = ["run_output.json", "sample_run_output.json"]
-    found = [c for c in candidates if Path(c).exists()]
-    return found or ["sample_run_output.json"]
-
-
 def get_db_connection():
     return graph_memory.init_db(DB_PATH)
 
@@ -72,22 +77,61 @@ def pubmed_url(pmid: str, meta: dict | None = None) -> str:
 
 
 # --------------------------------------------------------------------------
-# Sidebar: run selection + live weight sliders (shared across both tabs)
+# Sidebar: dual-mode ingestion console + live weight sliders
 # --------------------------------------------------------------------------
 
-st.title("🧬 Epistemic Filtering Agent — Live Dashboard")
+st.title("Research Paper Filter — Epistemic Bayesian Ranking Engine")
 st.caption(
-    "Read-only over a completed agent.py run, with live client-side recomputation of "
-    "posterior scores and an ML surrogate + async quarantine queue backed by epistemic_memory.db."
+    "Ranks conflicted clinical-literature abstracts by a deterministic Bayesian posterior, "
+    "not by trusting any single paper's own framing of its results."
 )
 
-with st.sidebar:
-    st.header("Run data")
-    run_path = st.selectbox("Run output file", options=available_run_files())
-    if st.button("Reload from disk"):
-        st.cache_data.clear()
-    st.divider()
+if "active_run_path" not in st.session_state:
+    st.session_state.active_run_path = "sample_run_output.json" if Path("sample_run_output.json").exists() else "run_output.json"
 
+with st.sidebar:
+    st.header("Ingestion Console")
+    ingestion_mode = st.radio(
+        "Mode", options=["Live PubMed Search", "Load Cached Run"], key="ingestion_mode"
+    )
+
+    if ingestion_mode == "Live PubMed Search":
+        live_query = st.text_input("PubMed query", value=DEFAULT_LIVE_QUERY, key="live_query")
+        live_n = st.slider("Sample Size (N)", min_value=5, max_value=50, value=30, step=5, key="live_n")
+        execute_clicked = st.button("Execute Pipeline", type="primary")
+        if execute_clicked:
+            progress_bar = st.progress(0.0, text="Starting pipeline...")
+
+            def _report(frac: float, text: str) -> None:
+                progress_bar.progress(min(1.0, max(0.0, frac)), text=text)
+
+            try:
+                out = agent.run_pipeline(
+                    query=live_query,
+                    max_results=live_n,
+                    output="run_output.json",
+                    progress_cb=_report,
+                )
+            except agent.PipelineError as e:
+                st.error(str(e))
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Pipeline run failed: {e}")
+            else:
+                st.session_state.active_run_path = "run_output.json"
+                st.cache_data.clear()
+                st.success(
+                    f"Pipeline complete: {out['papers_relevant']} relevant paper(s) scored, "
+                    f"{len(out['papers_excluded_from_arbiter'])} excluded from arbitration."
+                )
+                st.rerun()
+    else:
+        checkpoint_path = st.text_input("Checkpoint path", value="run_output.json", key="checkpoint_path")
+        if st.button("Reload Checkpoint"):
+            st.session_state.active_run_path = checkpoint_path
+            st.cache_data.clear()
+            st.rerun()
+
+    st.divider()
     st.header("Reasoning Step 2 weights")
     w_prior = st.slider(
         "Methodology / Prior weight (w_M)", 0.0, 1.0, agent.W_PRIOR, 0.05,
@@ -98,10 +142,15 @@ with st.sidebar:
     w_velocity = round(1.0 - w_prior, 4)
     st.caption(f"Velocity weight (w_V) = **{w_velocity:.2f}** (auto-set: w_M + w_V = 1.0)")
 
+run_path = st.session_state.active_run_path
+
 try:
     data = load_run(run_path)
 except FileNotFoundError:
-    st.error(f"Could not find {run_path}. Run `python agent.py` first to generate it.")
+    st.error(
+        f"Could not find {run_path}. Use \"Live PubMed Search\" in the sidebar, or point "
+        "\"Load Cached Run\" at an existing checkpoint (e.g. sample_run_output.json)."
+    )
     st.stop()
 
 conn = get_db_connection()
@@ -139,19 +188,45 @@ def recompute(paper: dict, w_prior: float, w_velocity: float) -> dict:
 live_ranking = [recompute(p, w_prior, w_velocity) for p in data["full_ranking"]]
 live_ranking.sort(key=lambda p: p["posterior_score_live"], reverse=True)
 
-tab1, tab2 = st.tabs(["📊 Epistemic Matrix & Knowledge Graph", "📈 Empirical Prior Convergence & Calibration"])
+tab1, tab2 = st.tabs(["Paper Ranking & Knowledge Graph", "Empirical Prior Convergence & State Calibration"])
 
 
 # ============================================================================
-# TAB 1 — Epistemic Matrix & Knowledge Graph
+# TAB 1 — Paper Ranking & Knowledge Graph
 # ============================================================================
 
 with tab1:
     # ------------------------------------------------------------------
-    # Dynamic Ranking Matrix
+    # Mathematical scaffolding
     # ------------------------------------------------------------------
 
-    st.header("📊 Dynamic Ranking Matrix")
+    with st.expander("Mathematical Formulation & State Estimation", expanded=False):
+        st.markdown("**Posterior Blending**")
+        st.latex(
+            r"S_{\text{posterior}} = \text{clip}\left("
+            r"[P(E) \cdot L \cdot \text{Precision}] \cdot w_M + V_{\text{norm}} \cdot w_V\right)"
+        )
+        st.markdown("**Discrepancy Index & Likelihood Decay**")
+        st.latex(
+            r"D = \max(0, \text{Claim Hyperbole} - \text{Design Rigor Ceiling}), "
+            r"\quad L = \exp(-0.8 \cdot D)"
+        )
+        st.markdown("**Statistical Precision & Standard Error**")
+        st.latex(
+            r"\text{SE} = \frac{\text{CI}_{\text{upper}} - \text{CI}_{\text{lower}}}{3.92}, "
+            r"\quad \text{Precision Penalty} = \exp(-2.0 \cdot \max(0, \text{SE} - 0.5))"
+        )
+        st.markdown("**Global Normalized Citation Velocity**")
+        st.latex(
+            r"V_{\text{norm}} = \frac{V - V_{\min}}{V_{\max} - V_{\min}}, "
+            r"\quad V = \frac{\text{Citations}}{\Delta\text{Years} + 0.5}"
+        )
+
+    # ------------------------------------------------------------------
+    # Paper Ranking
+    # ------------------------------------------------------------------
+
+    st.header("Paper Ranking")
 
     rows = []
     for i, p in enumerate(live_ranking, start=1):
@@ -162,11 +237,11 @@ with tab1:
                 "Rank": i,
                 "PMID": pubmed_url(meta["pmid"], meta),
                 "Title": meta["title"][:70] + ("…" if len(meta["title"]) > 70 else ""),
-                "DOI": f"https://doi.org/{meta['doi']}" if meta.get("doi") else None,
-                "Design": tele["study_design"] + (" 🆕" if graph_memory.is_ood_tier(tier) else ""),
+                "Link": f"https://doi.org/{meta['doi']}" if meta.get("doi") else None,
+                "Design": tele["study_design"] + (" [OOD]" if graph_memory.is_ood_tier(tier) else ""),
                 "N": tele["sample_size"],
                 "Hype": tele["claim_hyperbole"],
-                "Prereg": "✅" if tele.get("is_preregistered") else "",
+                "Prereg": "Yes" if tele.get("is_preregistered") else "",
                 "P(E)": round(p["prior_credence"], 3),
                 "D": round(p["discrepancy_index"], 3),
                 "L(Absurdity)": round(p["likelihood_penalty"], 3),
@@ -197,21 +272,21 @@ with tab1:
             "PMID": st.column_config.LinkColumn(
                 "PMID", display_text=r"https://pubmed\.ncbi\.nlm\.nih\.gov/(\d+)/"
             ),
-            "DOI": st.column_config.LinkColumn("DOI", display_text=r"https://doi\.org/(.+)"),
+            "Link": st.column_config.LinkColumn("Link", display_text=r"https://doi\.org/(.+)"),
         },
     )
     st.caption(
         "S_posterior (live) recomputes instantly as the sidebar sliders move — pure client-side "
         "re-blend of already-extracted prior_credence/likelihood_penalty/velocity_norm, no API "
-        "calls. 🆕 = out-of-distribution study design (Jeffreys-prior tier). PMID/DOI cells are "
-        "clickable links."
+        "calls. [OOD] = out-of-distribution study design (Jeffreys-prior tier). PMID/Link cells "
+        "are clickable."
     )
 
     # ------------------------------------------------------------------
     # Paper Inspector
     # ------------------------------------------------------------------
 
-    st.header("🔍 Paper Inspector")
+    st.header("Paper Inspector")
 
     _by_pmid = {p["metadata"]["pmid"]: p for p in live_ranking}
     inspected_pmid = st.selectbox(
@@ -246,7 +321,7 @@ with tab1:
             st.link_button("View on PubMed", pubmed_url(inspected_pmid, imeta))
         with c2:
             if imeta.get("doi"):
-                st.link_button("View DOI", f"https://doi.org/{imeta['doi']}")
+                st.link_button("View Link", f"https://doi.org/{imeta['doi']}")
 
         st.write(f"**Design:** {itele['study_design']} (tier: `{itier}`)  **N:** {itele['sample_size']}  **Year:** {imeta.get('publication_year')}")
         st.write(f"**Claim hyperbole:** {itele['claim_hyperbole']}/5  **Preregistered:** {itele.get('is_preregistered', False)}")
@@ -269,13 +344,13 @@ with tab1:
     # Physics-stabilized signed knowledge graph (pyvis)
     # ------------------------------------------------------------------
 
-    st.header("🕸 Knowledge Graph")
+    st.header("Knowledge Graph")
 
     nx_graph = graph_memory.load_graph(conn)
 
     # If the DB doesn't have this run's papers yet (e.g. dashboard opened
-    # before any agent.py run persisted them), seed the live view from the
-    # loaded JSON so the graph isn't empty on first use.
+    # before any run persisted them), seed the live view from the loaded
+    # JSON so the graph isn't empty on first use.
     if nx_graph.number_of_nodes() == 0:
         for p in data["full_ranking"]:
             meta, tele = p["metadata"], p["telemetry"]
@@ -296,24 +371,6 @@ with tab1:
                 is_preregistered=tele.get("is_preregistered", False),
             )
 
-    def score_to_color(score: float) -> str:
-        """Green (high credence) -> red (low/penalized). HSL hue 0=red,
-        120=green; score is already in [0,1] by construction (see agent.py
-        clip01)."""
-        score = max(0.0, min(1.0, score))
-        hue = int(score * 120)
-        return f"hsl({hue}, 70%, 45%)"
-
-    # Signed edge styling — exact spec: SUPPORTING solid green width=2,
-    # MENTION slate gray width=1, REFUTING bold red dashed width=3 (a
-    # detected contradiction is unconditionally REFUTING too).
-    EDGE_STYLE = {
-        "SUPPORTING": {"color": "#2ecc71", "width": 2, "dashes": False},
-        "MENTION": {"color": "#95a5a6", "width": 1, "dashes": False},
-        "REFUTING": {"color": "#e74c3c", "width": 3, "dashes": True},
-    }
-    NODE_SIZE_MIN, NODE_SIZE_MAX = 10, 55
-
     def build_pyvis_html(g, prereg_lookup: dict) -> str:
         from pyvis.network import Network
 
@@ -332,24 +389,33 @@ with tab1:
         )
         for node, attrs in g.nodes(data=True):
             n = attrs.get("sample_size") or 0
-            # log10(N+1) scaling, clamped to [NODE_SIZE_MIN, NODE_SIZE_MAX]
-            # so a single N=100000 outlier can't swamp a 30-50 node batch
-            # visually — explicit min/max bounds, not just a scale factor.
-            size = max(NODE_SIZE_MIN, min(NODE_SIZE_MAX, 10 + 8 * math.log10(n + 1)))
             score = attrs.get("posterior_score", 0.5) or 0.5
-            color = score_to_color(score)
+            # Radius strictly proportional to S_posterior: 12 + 28*S.
+            size = graph_memory.node_radius(score)
+            # Continuous fill-color gradient over log10(N+1): silver (N~0)
+            # -> deep electric blue (N>=2000), clamped past the ceiling.
+            fill_color = graph_memory.node_fill_color(n)
             url = attrs.get("url") or f"https://pubmed.ncbi.nlm.nih.gov/{node}/"
             # graph_memory.load_graph() computes is_ood_design live from the
             # stored study_design/sample_size; is_preregistered is stored
-            # directly on the node (added this pass) but fall back to the
-            # loaded run JSON for older DBs that predate that column.
+            # directly on the node but fall back to the loaded run JSON for
+            # older DBs that predate that column.
             is_ood = attrs.get("is_ood_design", False)
             is_prereg = attrs.get("is_preregistered") or prereg_lookup.get(node, False)
-            badges = ("🆕 OOD  " if is_ood else "") + ("✅ Preregistered" if is_prereg else "")
+            is_quarantined = attrs.get("audit_status") in ("ASYNC_QUARANTINED", "FLAGGED")
+            border = graph_memory.node_border_style(
+                is_preregistered=is_prereg, is_ood=is_ood, is_quarantined=is_quarantined
+            )
+            badges = " / ".join(
+                b for b in [
+                    "Quarantined/Anomaly" if is_quarantined else None,
+                    "OOD design" if is_ood else None,
+                    "Preregistered" if is_prereg else None,
+                ] if b
+            )
             # pyvis renders `title` as HTML in the hover tooltip by default,
-            # so a real clickable <a> works — "hovering a node exposes the
-            # direct PubMed link" per spec (click-to-navigate on the node
-            # itself would need custom vis-network click-event JS).
+            # so a real clickable <a> works — hovering a node exposes the
+            # direct PubMed link.
             title = (
                 f"PMID {node}<br>{attrs.get('title', '')}<br>"
                 f"<a href='{url}' target='_blank'>{url}</a><br>"
@@ -361,18 +427,19 @@ with tab1:
                 f"Audit: {attrs.get('audit_status', 'PASSED')}"
                 + (f"<br>{badges}" if badges else "")
             )
-            border_width = 4 if (is_ood or is_prereg) else 1
-            border_color = "#9b59b6" if is_ood else ("#2ecc71" if is_prereg else color)
-            net.add_node(node, label=str(node), size=size, title=title, borderWidth=border_width, shape="dot")
+            net.add_node(
+                node, label=str(node), size=size, title=title,
+                borderWidth=border["width"], shapeProperties={"borderDashes": border["dashes"]},
+                shape="dot",
+            )
             # pyvis's add_node doesn't cleanly take a separate border color
             # kwarg across versions — set the split fill/border color
             # directly on the node dict it just created instead.
-            net.get_node(node)["color"] = {"background": color, "border": border_color}
+            net.get_node(node)["color"] = {"background": fill_color, "border": border["color"]}
 
         for src, dst, attrs in g.edges(data=True):
-            sentiment = "REFUTING" if attrs.get("edge_type") == "contradiction" else (attrs.get("sentiment") or "MENTION")
-            style = EDGE_STYLE[sentiment]
-            detail = attrs.get("detail") or f"citation ({sentiment})"
+            style = graph_memory.edge_style_for(attrs.get("edge_type"), attrs.get("sentiment"))
+            detail = attrs.get("detail") or "citation"
             net.add_edge(src, dst, color=style["color"], width=style["width"], dashes=style["dashes"], title=detail)
 
         # forceAtlas2Based with central gravity damping renders 30-50 node
@@ -407,31 +474,32 @@ with tab1:
     col_legend, col_graph = st.columns([1, 4])
     with col_legend:
         st.markdown(
-            "**Legend**\n\n"
-            "- Node size ∝ log10(N+1), clamped to a readable range\n"
-            "- Node fill: 🟢 high S_posterior → 🔴 low/penalized\n"
-            "- Violet border = out-of-distribution design (Jeffreys prior)\n"
-            "- Green border = preregistered trial\n"
-            "- 🟢 solid edge (width 2) = citation, SUPPORTING\n"
-            "- ⬜ slate solid edge (width 1) = citation, MENTION\n"
-            "- 🔴 dashed edge (width 3) = REFUTING citation or contradiction\n"
-            "- **Hover any node** for its clickable PubMed link + full telemetry\n"
+            "| Element | Encoding |\n"
+            "|---|---|\n"
+            "| Node diameter | `12 + 28 x S_posterior` |\n"
+            "| Node fill | log10(N+1): silver (`#CBD5E1`) -> blue (`#0284C7`) |\n"
+            "| Border — green | Preregistered trial |\n"
+            "| Border — violet | Out-of-distribution design (Jeffreys prior) |\n"
+            "| Border — dashed crimson | Quarantined / anomaly |\n"
+            "| Edge — solid green (w=2) | SUPPORTING citation |\n"
+            "| Edge — slate gray (w=1) | MENTION citation |\n"
+            "| Edge — dashed red (w=3) | REFUTING citation / contradiction |\n"
         )
         st.metric("Nodes", nx_graph.number_of_nodes())
         st.metric("Edges", nx_graph.number_of_edges())
 
     with col_graph:
         if nx_graph.number_of_nodes() == 0:
-            st.info("No graph data yet — run `python agent.py` at least once to populate epistemic_memory.db.")
+            st.info("No graph data yet — run the pipeline at least once to populate epistemic_memory.db.")
         else:
             html = build_pyvis_html(nx_graph, prereg_lookup)
-            st.components.v1.html(html, height=660, scrolling=True)
+            st.iframe(html, height=660)
 
     # ------------------------------------------------------------------
-    # Async Audit Queue & Surrogate Inspector
+    # Audit & Exceptions Queue
     # ------------------------------------------------------------------
 
-    st.header("🤖 Async Audit Queue & Surrogate Inspector")
+    st.header("Audit & Exceptions Queue")
 
     auto_resolved = [p for p in data["full_ranking"] if p.get("audit_status") == "AUTO_RESOLVED_BY_SURROGATE"]
     if auto_resolved:
@@ -495,10 +563,10 @@ with tab1:
     st.dataframe(pd.DataFrame(prior_rows), width="stretch", hide_index=True)
 
     # ------------------------------------------------------------------
-    # LLM Arbiter Synthesis & Counterfactual Console
+    # LLM Synthesis & Arbitration
     # ------------------------------------------------------------------
 
-    st.header("⚖️ Arbiter Synthesis & Counterfactual Console")
+    st.header("LLM Synthesis & Arbitration")
 
     verdict = data.get("arbiter_verdict")
     if verdict:
@@ -535,11 +603,11 @@ with tab1:
 
 
 # ============================================================================
-# TAB 2 — Empirical Prior Convergence & Calibration
+# TAB 2 — Empirical Prior Convergence & State Calibration
 # ============================================================================
 
 with tab2:
-    st.header("📈 Empirical Prior Convergence")
+    st.header("Empirical Prior Convergence")
     st.caption(
         "Every feedback event (human, ML surrogate, or the adversarial calibration engine) "
         "snapshots E[P(E)] = alpha/(alpha+beta) into calibration_history. This tracks how each "
@@ -571,7 +639,7 @@ with tab2:
             st.dataframe(history_df, width="stretch", hide_index=True)
 
     st.divider()
-    st.header("🧪 Live Calibration Console")
+    st.header("Live Calibration Console")
     st.caption(
         "Runs backtest_calibration.py's adversarial LLM-as-a-judge critic directly against "
         f"`{run_path}`'s full_ranking, live. Each iteration re-judges every paper and applies "
@@ -611,3 +679,44 @@ with tab2:
                     "Priors updated and calibration_history snapshotted — redrawing convergence curves."
                 )
                 st.rerun()
+
+    st.divider()
+    with st.expander("Prior Calibration State Management"):
+        st.caption(
+            "Export the current Beta(alpha, beta) hyperparameters and expected credences to a "
+            "JSON checkpoint, restore a prior checkpoint, or reset every seeded tier back to its "
+            "initial distribution. All three write directly to epistemic_memory.db and snapshot "
+            "calibration_history."
+        )
+
+        export_payload = graph_memory.export_priors(conn)
+        st.download_button(
+            "Export Priors to JSON",
+            data=json.dumps(export_payload, indent=2),
+            file_name="epistemic_priors_export.json",
+            mime="application/json",
+        )
+
+        uploaded = st.file_uploader("Import Priors from JSON", type=["json"], key="prior_import_uploader")
+        if uploaded is not None:
+            try:
+                payload = json.load(uploaded)
+            except json.JSONDecodeError as e:
+                st.error(f"Could not parse {uploaded.name}: {e}")
+            else:
+                n_updated = graph_memory.import_priors(conn, payload, trigger_source="import")
+                if n_updated:
+                    st.success(f"Imported {n_updated} tier(s) from {uploaded.name}. Reloading...")
+                    st.rerun()
+                else:
+                    st.warning(f"No valid tier entries found in {uploaded.name} — nothing was changed.")
+
+        st.divider()
+        confirm_reset = st.checkbox(
+            "I understand this overwrites every seeded tier's learned prior in epistemic_memory.db.",
+            key="confirm_reset_priors",
+        )
+        if st.button("Reset Priors to Default", disabled=not confirm_reset):
+            n_reset = graph_memory.reset_priors_to_default(conn, trigger_source="reset")
+            st.success(f"Reset {n_reset} tier(s) to their initial seed distributions.")
+            st.rerun()

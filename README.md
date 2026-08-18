@@ -417,45 +417,64 @@ use plain `CREATE TABLE IF NOT EXISTS` instead, since a fresh table needs no col
 streamlit run ui.py
 ```
 
-Reads a completed run's JSON output plus `epistemic_memory.db`. It never re-calls PubMed.
+Institutional typography throughout — no emoji anywhere in the UI. A sidebar "Ingestion
+Console" drives two ingestion modes:
 
-### Tab 1 — Epistemic Matrix & Knowledge Graph
+- **Live PubMed Search** — a query box (default the Semaglutide/MASH-NASH/fibrosis query), a
+  Sample Size (N) slider (5-50), and an "Execute Pipeline" button that calls `agent.run_pipeline()`
+  **in-process** — the exact same function `agent.py`'s CLI (`main()`) calls, not a
+  reimplementation — with a `progress_cb` wired to `st.progress()` so the fetch/extract/score/
+  arbitrate/persist stages report live. Completion updates the active session state (and
+  `run_output.json` on disk) without a page reload.
+- **Load Cached Run** — the original read-only mode: a checkpoint path (default
+  `run_output.json`) and a "Reload Checkpoint" button.
 
-- **Dynamic Ranking Matrix** — Methodology-weight (w_M) and Velocity-weight (w_V=1-w_M) sliders
-  re-sort every paper's `S_posterior` **entirely in client-side memory**, by calling the *exact
-  same* `agent.score_one()` function the CLI pipeline uses (not a re-implementation that could
-  drift out of sync) against the already-extracted `prior_credence`/`likelihood_penalty`/
-  `velocity_norm` — no new extraction, no new Gemini calls. PMID and DOI columns render as
-  clickable links (`st.column_config.LinkColumn`, with a regex `display_text` so the cell shows
-  the bare PMID/DOI rather than the full URL); 🆕/✅ flag out-of-distribution designs and
-  preregistered trials.
-- **Paper Inspector** — pick any paper from a dropdown to see its full metadata, a "View on
-  PubMed" and "View DOI" link button pair (`st.link_button`), the reported 95% CI/p-value if
-  extracted, and the base-prior → bonus → effective-prior → posterior breakdown for that
-  specific paper.
-- **Physics-stabilized signed graph** — rendered via embedded pyvis HTML (`cdn_resources=
-  "in_line"` — see the edge case below for why that flag matters), physics solver
-  `forceAtlas2Based` with central-gravity damping (tuned specifically so a 30-50 node batch
-  doesn't collapse into an overlapping cluster the way `barnesHut` alone tends to at that scale).
-  Node size ∝ `log10(N+1)`, clamped to `[10, 55]px` so one N=100,000 outlier can't swamp the
-  rest visually; node fill color interpolates green (high `S_posterior`) to red
-  (low/penalized); node **border** flags out-of-distribution designs (violet) and preregistered
-  trials (green). Edges are signed per the exact spec: `SUPPORTING` solid green `#2ecc71`
-  width 2, `MENTION` slate gray `#95a5a6` width 1, `REFUTING` bold red dashed `#e74c3c` width 3
-  (a contradiction edge is unconditionally `REFUTING`). Hovering any node exposes its clickable
-  PubMed link plus full telemetry in the tooltip.
-- **Async Audit Queue & Surrogate Inspector** — replaces the old blocking HITL panel. Cards for
+Either mode feeds the same Methodology ($w_M$) / Velocity ($w_V$=1-$w_M$) sliders, which re-sort
+every paper's `S_posterior` **entirely in client-side memory** by calling `agent.score_one()`
+against already-extracted telemetry — no re-extraction, no API calls.
+
+### Tab 1 — Paper Ranking & Knowledge Graph
+
+- **Mathematical Formulation & State Estimation** — a collapsed-by-default `st.expander` above
+  the ranking table rendering the four governing equations (posterior blending, discrepancy/
+  likelihood decay, precision/standard error, normalized citation velocity) as `st.latex`, so the
+  scoring isn't just described in prose.
+- **Paper Ranking** (formerly "Dynamic Ranking Matrix") — PMID and `Link` (renamed from `DOI`)
+  columns render as clickable links (`st.column_config.LinkColumn`, with a regex `display_text`
+  so the cell shows the bare PMID/DOI rather than the full URL); `[OOD]` flags an
+  out-of-distribution design.
+- **Paper Inspector** — pick any paper from a dropdown to see its full metadata, "View on
+  PubMed"/"View Link" buttons (`st.link_button`), the reported 95% CI/p-value if extracted, and
+  the base-prior → bonus → effective-prior → posterior breakdown for that specific paper.
+- **Knowledge Graph** — rendered via `st.iframe` over embedded pyvis HTML (`cdn_resources=
+  "in_line"` — see the edge case below for why that flag matters; `st.iframe` replaced the
+  deprecated `st.components.v1.html` this pass), physics solver `forceAtlas2Based` with
+  central-gravity damping (tuned so a 30-50 node batch doesn't collapse into an overlapping
+  cluster the way `barnesHut` alone tends to at that scale). All node/edge color and size math
+  lives in `graph_memory.py` (`node_radius`, `node_fill_color`, `node_border_style`,
+  `edge_style_for`, `EDGE_STYLE`) — one source of truth the dashboard renders from and
+  `test_matrix.py` verifies directly, instead of a value dict hand-mirrored into each:
+  - Node **diameter** is strictly proportional to `S_posterior`: `12 + 28 * S_posterior`.
+  - Node **fill** is a continuous luminance gradient over `log10(N+1)`: light silver/slate
+    `#CBD5E1` at N≈0 up to deep electric blue `#0284C7` at N≥2000 (clamped past that ceiling).
+  - Node **border**: solid emerald `#10B981` (preregistered), solid violet `#8B5CF6`
+    (out-of-distribution/Jeffreys prior), dashed crimson `#EF4444` (quarantined/anomaly) — checked
+    in that priority order when more than one flag applies to the same node.
+  - **Edges**: `SUPPORTING` solid emerald `#10B981` width 2, `MENTION` slate gray `#64748B`
+    width 1, `REFUTING`/contradiction bold red dashed `#EF4444` width 3.
+  - The legend above the canvas is a plain Markdown table, not prose bullets.
+- **Audit & Exceptions Queue** (formerly "Async Audit Queue & Surrogate Inspector") — cards for
   every `AUTO_RESOLVED_BY_SURROGATE` paper show the predicted action and confidence score; an
   "Asynchronous Quarantine Queue" accordion lists every `unresolved_audits` row with a one-click
   "Resolve (confirm & release)" button that records feedback, flips `audit_status` to
   `OVERRIDDEN`, and clears the queue entry.
-- **Arbiter + counterfactual console** — renders the persisted arbiter justification, plus a
-  free-text box that calls Gemini live (`agent.counterfactual_arbiter()`, reusing
-  `call_gemini_with_retry`) with a user-supplied hypothetical ("re-evaluate if liver stiffness
-  endpoints are excluded") and the same top-3 telemetry, explicitly instructed to say so if the
-  scenario *wouldn't* plausibly change the ranking rather than manufacturing a change.
+- **LLM Synthesis & Arbitration** (formerly "Arbiter Synthesis & Counterfactual Console") —
+  renders the persisted arbiter justification, plus a free-text box that calls Gemini live
+  (`agent.counterfactual_arbiter()`, reusing `call_gemini_with_retry`) with a user-supplied
+  hypothetical and the same top-3 telemetry, explicitly instructed to say so if the scenario
+  *wouldn't* plausibly change the ranking rather than manufacturing a change.
 
-### Tab 2 — Empirical Prior Convergence & Calibration
+### Tab 2 — Empirical Prior Convergence & State Calibration
 
 - **Convergence chart** — `graph_memory.get_calibration_history_df()`, pivoted wide
   (`index=iteration, columns=tier`) and forward-filled so a quiet tier draws a flat line instead
@@ -465,9 +484,23 @@ Reads a completed run's JSON output plus `epistemic_memory.db`. It never re-call
   Calibration" button that imports `backtest_calibration.py` directly and calls its
   `run_calibration_pass()` in a loop against the loaded run's `full_ranking`, live, streaming a
   running log of each verdict and redrawing the convergence chart when done (`st.rerun()`).
-  Verified live during development: one real click ran the adversarial judge across all 10
-  papers, produced 10 real `calibration_history` snapshots across 3 tiers, and rendered 3 real
-  convergence curves — see "Edge cases" below for why that state isn't what's committed.
+- **Prior Calibration State Management** — an `st.expander` with three controls, all writing
+  directly to `epistemic_memory.db` and snapshotting `calibration_history`
+  (`graph_memory.set_prior_hyperparams()` is the one function all three funnel through):
+  - **Export Priors to JSON** — `graph_memory.export_priors()` behind an `st.download_button`;
+    every tier's `(alpha, beta, expected_credence)`.
+  - **Import Priors from JSON** — `st.file_uploader` + `graph_memory.import_priors()`; accepts
+    either the exporter's own `{"tiers": {...}}` shape or a bare `{tier: {"alpha":.., "beta":..}}`
+    mapping, and silently skips any entry with a non-positive or malformed alpha/beta rather than
+    corrupting a Beta distribution's support.
+  - **Reset Priors to Default** — `graph_memory.reset_priors_to_default()`, gated behind an
+    explicit confirmation checkbox since it overwrites every seeded tier's learned history; OOD
+    tiers registered later are left untouched (they have no seed value to reset to).
+
+Verified live during development: one real "Execute Pipeline" click ran the full pipeline
+end-to-end against real PubMed+Gemini data with zero Streamlit runtime errors, and one real
+calibration-console click ran the adversarial judge and rendered real convergence curves — see
+"Edge cases" and "known limitations" below for why that state isn't what's committed.
 
 ## Edge cases I hit for real, not hypothetically
 
@@ -561,6 +594,20 @@ concluding the model itself was fine. The fixed test
 real lesson about synthetic-data test design: a feature vector's parts have to agree with each
 other, not just individually look "clearly PASS-like" or "clearly REJECT-like".
 
+### 7. `st.components.v1.html` is already past its own removal date
+
+Verifying the "Live PubMed Search" sidebar mode end-to-end (a real click, real PubMed+Gemini
+calls) surfaced a runtime deprecation notice on the exact line rendering the knowledge graph:
+`st.components.v1.html` is slated for removal, and the removal date named in the notice had
+already passed relative to the run's own clock — it just hadn't been enforced yet in the
+installed Streamlit version. Rather than leave a fix pending on when a point release finally
+drops it, switched to `st.iframe(html, height=660)`, Streamlit's documented replacement (`st.iframe`
+embeds a raw HTML string directly when the `src` argument doesn't match a URL/path pattern, same
+as the old call's behavior). Confirmed via `document.querySelectorAll('iframe').length === 1` and
+an empty error-console after the swap — this is also why the two ingestion modes needed a real
+click each, not just code review, to catch: a soon-to-be-removed API call doesn't fail
+`py_compile` or the unit suite.
+
 ## What I'd flag as a known limitation (and defend anyway)
 
 - **Citation counts are mocked** (`random.randint(0, 200)`), logged loudly at runtime, and
@@ -600,14 +647,18 @@ other, not just individually look "clearly PASS-like" or "clearly REJECT-like".
   can't be confidently resolved should rank low, not "average") but not empirically tuned.
   **With more time:** these could themselves be learned (e.g. the tier's own low-percentile
   historical credence) rather than hand-picked.
-- **The dashboard's Live Calibration Console writes directly to the same `epistemic_memory.db`
-  a real `agent.py` run would use next**, with no confirmation step or preview before committing
-  — clicking "Execute Autonomous Adversarial Calibration" immediately shifts real priors. This
-  is why the committed `epistemic_memory.db` reflects a plain `agent.py` run, not the
-  calibration-console click verified live during development (see "Edge cases" above) — that
-  would have left the committed DB's priors inconsistent with the committed
-  `sample_run_output.json`'s scores. **With more time:** the console should default to a scratch
-  DB path (mirroring `backtest_calibration.py --db`'s own advice) rather than the live one.
+- **The dashboard's Live Calibration Console, "Execute Pipeline" (Live PubMed Search), and the
+  Prior Calibration State Management import/reset controls all write directly to the same
+  `epistemic_memory.db` a real `agent.py` CLI run would use next**, with no confirmation step
+  before committing (Reset Priors to Default is the one exception — it's gated behind an explicit
+  checkbox). This is why the committed `epistemic_memory.db`/`sample_run_output.json` pair always
+  reflects a plain, freshly-regenerated `agent.py` CLI run rather than whatever state a live
+  dashboard click last left behind (see "Edge cases" above) — every dashboard write path was
+  verified live during development, then the committed DB was regenerated clean before committing
+  so it stays consistent with the committed JSON. **With more time:** "Live PubMed Search" and the
+  calibration console should default to a scratch DB path (mirroring `backtest_calibration.py
+  --db`'s own advice) rather than the live one, and prior import should preview the diff before
+  applying it.
 - **`p_value` is extracted but never used in scoring.** The telemetry schema captures it because
   the spec asked for it, and it's visible in the Paper Inspector and `run_output.json` for a
   human to read, but only the CI-derived Standard Error feeds the Precision Penalty. A p-value
@@ -699,6 +750,9 @@ Then explore it live:
 streamlit run ui.py
 ```
 
+The dashboard's own sidebar can also drive a fresh pipeline run directly (no separate
+`python agent.py` invocation needed) via its "Live PubMed Search" mode — see "Dashboard" below.
+
 Or run the adversarial calibration engine against a completed run (separate from the normal pipeline):
 
 ```bash
@@ -716,18 +770,22 @@ python -m pytest test_matrix.py -v
 ## Repo layout
 
 ```
-agent.py                 pipeline: fetch -> extract -> filter -> score -> non-blocking fail-safe
-                          -> arbiter. Configurable batch size (--limit/--batch-size, 5-50) with
-                          adaptive rate pacing for batches > 10.
+agent.py                 run_pipeline(): fetch -> extract -> filter -> score -> non-blocking
+                          fail-safe -> arbiter, called by both main() (CLI) and ui.py's "Live
+                          PubMed Search" sidebar mode. Configurable batch size (--limit/
+                          --batch-size, 5-50) with adaptive rate pacing for batches > 10.
 graph_memory.py          persistent knowledge graph (SQLite + networkx) + Bayesian active
                           learning + OOD/Jeffreys priors + signed citation/contradiction
                           topology + ML SurrogateOperator + calibration_history convergence log
+                          + prior export/import/reset + node/edge rendering color-and-size math
 backtest_calibration.py  autonomous adversarial calibration engine (separate CLI entry point)
-ui.py                    two-tab Streamlit dashboard (streamlit run ui.py)
-test_matrix.py           65 offline unit tests (posterior formula, anomaly gate, Beta updates,
+ui.py                    two-tab Streamlit dashboard (streamlit run ui.py), dual-mode ingestion
+                          (Live PubMed Search / Load Cached Run), no emoji, LaTeX scoring panel
+test_matrix.py           79 offline unit tests (posterior formula, anomaly gate, Beta updates,
                           OOD priors, precision penalty, citation sentiment, calibration mapping,
                           batch-size validation, surrogate training/prediction, non-blocking
-                          resolution, calibration_history snapshots, signed edge styling)
+                          resolution, calibration_history snapshots, signed edge/node styling,
+                          prior export/import/reset, run_pipeline wiring)
 requirements.txt
 .env.example
 sample_run_output.json   a real run's full output, committed so the ranking + justifications

@@ -30,7 +30,7 @@ import random
 import sys
 import time
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -1076,63 +1076,67 @@ def print_top3_defense(top: list[ScoredPaper], verdict: Optional[ArbiterVerdict]
 # --------------------------------------------------------------------------
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Epistemic Filtering Agent")
-    parser.add_argument("--query", default=DEFAULT_QUERY, help="PubMed search query")
-    parser.add_argument(
-        "--max-results", "--limit", "--batch-size", dest="max_results",
-        type=_batch_size, default=DEFAULT_MAX_RESULTS,
-        help=f"Number of PubMed results to fetch, {BATCH_SIZE_MIN}-{BATCH_SIZE_MAX} "
-        "(aliases: --limit, --batch-size — all three set the same value). Batches larger "
-        f"than {RATE_PACING_BATCH_THRESHOLD} trigger adaptive rate pacing "
-        f"(>= {RATE_PACING_MIN_INTERVAL}s between extraction calls) to protect the free "
-        "tier's ~15 RPM ceiling.",
-    )
-    parser.add_argument(
-        "--model",
-        default="gemini-flash-lite-latest",
-        help="Gemini model for both LLM steps. Using a '-latest' alias rather than a "
-        "pinned version since Google retires dated model names within months (verified "
-        "during development: gemini-2.0-flash was already gone as of this writing). "
-        "Deliberately the 'lite' tier, not 'gemini-flash-latest': the full flash model's "
-        "free tier was measured during development at a 20-requests/DAY cap (unusable for "
-        "iterative testing), while flash-lite handled a burst of 8 rapid calls with no "
-        "throttling at all. This task needs 10+ calls per run, so lite is the only free "
-        "tier that's actually usable — not a quality tradeoff, a quota-survival one.",
-    )
-    parser.add_argument(
-        "--output", default="run_output.json", help="Where to save the full structured run"
-    )
-    parser.add_argument("--seed", type=int, default=None, help="Seed for the mocked citation RNG (reproducibility)")
-    parser.add_argument(
-        "--db", default=graph_memory.DB_PATH_DEFAULT,
-        help="Path to the persistent epistemic knowledge graph / Beta-prior store (SQLite)",
-    )
-    args = parser.parse_args()
+class PipelineError(RuntimeError):
+    """Raised by run_pipeline() for an expected, user-actionable failure
+    (missing API key, too few papers, ...) — as opposed to an unexpected
+    exception. main() converts this to a clean CLI error message + exit(1);
+    ui.py's sidebar "Execute Pipeline" button catches it and renders it as
+    an st.error() instead of a raw traceback."""
 
-    if args.seed is not None:
-        random.seed(args.seed)
+
+def run_pipeline(
+    *,
+    query: str,
+    max_results: int,
+    model: str = "gemini-flash-lite-latest",
+    output: Optional[str] = "run_output.json",
+    db: Optional[str] = None,
+    seed: Optional[int] = None,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
+) -> dict:
+    """The full ingestion -> extraction -> scoring -> fail-safe -> arbiter
+    -> persistence pipeline, factored out of main() so it has exactly one
+    implementation shared by the CLI and ui.py's "Live PubMed Search" mode
+    (the dashboard drives a real run in-process instead of only ever
+    reading a file another process produced). Returns the same structured
+    dict main() writes to --output; writes it to `output` too unless it's
+    None (ui.py still checkpoints its live runs to disk so a later "Load
+    Cached Run" can pick them back up).
+
+    `progress_cb(fraction, message)`, if given, is called at each pipeline
+    stage boundary (fraction in [0, 1]) — built for st.progress(), but it's
+    a plain callable so nothing here imports streamlit.
+    """
+
+    def report(frac: float, text: str) -> None:
+        if progress_cb:
+            progress_cb(frac, text)
+
+    if seed is not None:
+        random.seed(seed)
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
-        log.error("[bold red]GEMINI_API_KEY is not set.[/] Copy .env.example to .env and fill it in.")
-        sys.exit(1)
+        raise PipelineError("GEMINI_API_KEY is not set. Copy .env.example to .env and fill it in.")
 
     from google import genai
 
     client = genai.Client(api_key=gemini_key)
 
     # ---- Persistent knowledge graph / active-learning store ----
-    conn = graph_memory.init_db(args.db)
+    db_path = db or graph_memory.DB_PATH_DEFAULT
+    conn = graph_memory.init_db(db_path)
 
     # ---- Module 1 ----
-    papers = fetch_pubmed(args.query, args.max_results)
+    report(0.05, f"Fetching up to {max_results} PubMed result(s) for '{query}'...")
+    papers = fetch_pubmed(query, max_results)
     if len(papers) < 3:
-        log.error(f"Only {len(papers)} papers with usable abstracts were found — need at least 3. Try a broader --query.")
-        sys.exit(1)
+        raise PipelineError(
+            f"Only {len(papers)} papers with usable abstracts were found — need at least 3. Try a broader query."
+        )
 
     # ---- Module 2 (LLM Step 1) + Reasoning Step 1: relevance filter ----
-    log.info(f"[EXTRACTING TELEMETRY] Sending {len(papers)} abstracts to Gemini ({args.model})...")
+    log.info(f"[EXTRACTING TELEMETRY] Sending {len(papers)} abstracts to Gemini ({model})...")
     pacer = RatePacer() if len(papers) > RATE_PACING_BATCH_THRESHOLD else None
     if pacer:
         log.info(
@@ -1141,10 +1145,11 @@ def main() -> None:
         )
     relevant: list[tuple[PaperMetadata, PaperTelemetry]] = []
     dropped_irrelevant = 0
-    for paper in papers:
+    for i, paper in enumerate(papers):
         if pacer:
             pacer.wait()
-        tele = extract_telemetry(client, args.model, paper)
+        report(0.1 + 0.4 * (i / len(papers)), f"Extracting telemetry ({i + 1}/{len(papers)}): PMID {paper.pmid}...")
+        tele = extract_telemetry(client, model, paper)
         if tele is None:
             continue
         if not tele.is_relevant:
@@ -1161,17 +1166,17 @@ def main() -> None:
         f"({dropped_irrelevant} dropped as off-topic)."
     )
     if len(relevant) < 3:
-        log.error(
+        raise PipelineError(
             f"Only {len(relevant)} relevant papers survived the filter — need at least 3 for a top-3 ranking. "
-            f"Try a broader --query or raise --max-results."
+            f"Try a broader query or raise the sample size."
         )
-        sys.exit(1)
 
     # Register any out-of-distribution study designs this batch introduced
     # (e.g. an LLM-reported "Mendelian Randomization") with an uninformative
     # Jeffreys prior BEFORE loading current_priors, so this run's own novel
     # designs are included in prior_lookup rather than only ones a previous
     # run already registered.
+    report(0.52, "Registering study-design priors...")
     ood_designs = set()
     for _, tele in relevant:
         tier = graph_memory.beta_tier_for(tele.study_design, tele.sample_size)
@@ -1185,9 +1190,10 @@ def main() -> None:
             f"{sorted(ood_designs)}"
         )
     current_priors = graph_memory.get_current_prior_means(conn)
-    log.info(f"[MEMORY] Loaded prior credences from [cyan]{args.db}[/]: " + ", ".join(f"{k}={v:.2f}" for k, v in current_priors.items()))
+    log.info(f"[MEMORY] Loaded prior credences from [cyan]{db_path}[/]: " + ", ".join(f"{k}={v:.2f}" for k, v in current_priors.items()))
 
     # ---- Module 3: Reasoning Step 2 — Bayesian posterior scoring (the judgment call) ----
+    report(0.58, "Computing posterior scores...")
     log.info(
         "[CALCULATING MATRIX] Computing posterior scores: "
         r"\[P(E) x L(Absurdity) x PrecisionPenalty] x 0.75 + \[citation velocity] x 0.25 ..."
@@ -1200,6 +1206,7 @@ def main() -> None:
     auto_resolved_count = 0
     async_quarantined_count = 0
     if flagged:
+        report(0.65, f"Resolving {len(flagged)} flagged anomaly(ies)...")
         log.warning(f"[FAIL-SAFE] {len(flagged)} paper(s) flagged for epistemic audit.")
         surrogate = graph_memory.SurrogateOperator(conn)
         if surrogate.is_trained:
@@ -1234,8 +1241,9 @@ def main() -> None:
         log.info(f"[FAIL-SAFE] {len(excluded)} paper(s) excluded from arbiter synthesis: {sorted(excluded)}")
 
     # ---- Module 4 (LLM Step 2) ----
+    report(0.78, f"Arbitrating top {len(top3)} with Gemini...")
     log.info(f"[ARBITRATING] Asking Gemini to defend the top {len(top3)} ranking with specific telemetry...")
-    verdict = arbitrate(client, args.model, top3)
+    verdict = arbitrate(client, model, top3)
 
     print_top3_defense(top3, verdict)
 
@@ -1243,6 +1251,7 @@ def main() -> None:
     # citation edges (real PubMed link data) and contradiction edges (keyword
     # heuristic — see graph_memory.py). Both are best-effort: a network hiccup
     # on the citation lookup must not blow up a run that already succeeded. ----
+    report(0.88, "Persisting knowledge graph...")
     for p in scored:
         graph_memory.upsert_node(
             conn,
@@ -1271,6 +1280,7 @@ def main() -> None:
     if contradiction_edges:
         log.info(f"[MEMORY] {len(contradiction_edges)} candidate contradiction edge(s) detected (keyword heuristic).")
 
+    report(0.94, "Looking up citation edges on PubMed...")
     try:
         texts = {p.metadata.pmid: (p.metadata.title, p.metadata.abstract) for p in scored}
         citation_edges = graph_memory.fetch_citation_edges_from_pubmed(
@@ -1292,13 +1302,13 @@ def main() -> None:
         log.warning(f"[MEMORY] Citation-edge lookup failed (non-fatal): {e}")
 
     conn.close()
-    log.info(f"[MEMORY] Knowledge graph persisted to [cyan]{args.db}[/].")
+    log.info(f"[MEMORY] Knowledge graph persisted to [cyan]{db_path}[/].")
 
     # ---- Persist full run for the demo / grading ----
     out = {
         "generated_at": datetime.now().isoformat(),
-        "query": args.query,
-        "model": args.model,
+        "query": query,
+        "model": model,
         "papers_fetched": len(papers),
         "papers_relevant": len(relevant),
         "papers_dropped_irrelevant": dropped_irrelevant,
@@ -1310,9 +1320,61 @@ def main() -> None:
         "top3": [p.model_dump() for p in top3],
         "arbiter_verdict": verdict.model_dump() if verdict else None,
     }
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=2)
-    log.info(f"[DONE] Full structured run saved to [cyan]{args.output}[/]")
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2)
+        log.info(f"[DONE] Full structured run saved to [cyan]{output}[/]")
+
+    report(1.0, "Done.")
+    return out
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Epistemic Filtering Agent")
+    parser.add_argument("--query", default=DEFAULT_QUERY, help="PubMed search query")
+    parser.add_argument(
+        "--max-results", "--limit", "--batch-size", dest="max_results",
+        type=_batch_size, default=DEFAULT_MAX_RESULTS,
+        help=f"Number of PubMed results to fetch, {BATCH_SIZE_MIN}-{BATCH_SIZE_MAX} "
+        "(aliases: --limit, --batch-size — all three set the same value). Batches larger "
+        f"than {RATE_PACING_BATCH_THRESHOLD} trigger adaptive rate pacing "
+        f"(>= {RATE_PACING_MIN_INTERVAL}s between extraction calls) to protect the free "
+        "tier's ~15 RPM ceiling.",
+    )
+    parser.add_argument(
+        "--model",
+        default="gemini-flash-lite-latest",
+        help="Gemini model for both LLM steps. Using a '-latest' alias rather than a "
+        "pinned version since Google retires dated model names within months (verified "
+        "during development: gemini-2.0-flash was already gone as of this writing). "
+        "Deliberately the 'lite' tier, not 'gemini-flash-latest': the full flash model's "
+        "free tier was measured during development at a 20-requests/DAY cap (unusable for "
+        "iterative testing), while flash-lite handled a burst of 8 rapid calls with no "
+        "throttling at all. This task needs 10+ calls per run, so lite is the only free "
+        "tier that's actually usable — not a quality tradeoff, a quota-survival one.",
+    )
+    parser.add_argument(
+        "--output", default="run_output.json", help="Where to save the full structured run"
+    )
+    parser.add_argument("--seed", type=int, default=None, help="Seed for the mocked citation RNG (reproducibility)")
+    parser.add_argument(
+        "--db", default=graph_memory.DB_PATH_DEFAULT,
+        help="Path to the persistent epistemic knowledge graph / Beta-prior store (SQLite)",
+    )
+    args = parser.parse_args()
+
+    try:
+        run_pipeline(
+            query=args.query,
+            max_results=args.max_results,
+            model=args.model,
+            output=args.output,
+            db=args.db,
+            seed=args.seed,
+        )
+    except PipelineError as e:
+        log.error(f"[bold red]{e}[/]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

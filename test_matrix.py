@@ -934,48 +934,201 @@ def test_calibration_history_df_columns_and_ordering():
 
 
 # --------------------------------------------------------------------------
-# Signed edge color/style classification logic (ui.py's EDGE_STYLE table,
-# mirrored here so the mapping itself is verified without importing
-# Streamlit).
+# Signed edge color/style classification logic. graph_memory.EDGE_STYLE and
+# edge_style_for() are the single source of truth ui.py renders from — no
+# mirrored dict here to drift out of sync with the real one.
 # --------------------------------------------------------------------------
-
-_EDGE_STYLE = {
-    "SUPPORTING": {"color": "#2ecc71", "width": 2, "dashes": False},
-    "MENTION": {"color": "#95a5a6", "width": 1, "dashes": False},
-    "REFUTING": {"color": "#e74c3c", "width": 3, "dashes": True},
-}
 
 
 def test_edge_style_matches_spec_exactly():
-    assert _EDGE_STYLE["SUPPORTING"] == {"color": "#2ecc71", "width": 2, "dashes": False}
-    assert _EDGE_STYLE["MENTION"] == {"color": "#95a5a6", "width": 1, "dashes": False}
-    assert _EDGE_STYLE["REFUTING"] == {"color": "#e74c3c", "width": 3, "dashes": True}
+    assert graph_memory.EDGE_STYLE["SUPPORTING"] == {"color": "#10B981", "width": 2, "dashes": False}
+    assert graph_memory.EDGE_STYLE["MENTION"] == {"color": "#64748B", "width": 1, "dashes": False}
+    assert graph_memory.EDGE_STYLE["REFUTING"] == {"color": "#EF4444", "width": 3, "dashes": True}
 
 
 def test_contradiction_edges_always_classify_as_refuting_style():
     """agent.py tags every contradiction edge sentiment='REFUTING'
-    unconditionally; ui.py's rendering logic does the same regardless of
-    whatever (if anything) is in the edge's own sentiment attribute."""
-    edge_type = "contradiction"
-    sentiment_attr = None  # contradiction edges don't set a sentiment column value in some paths
-    resolved = "REFUTING" if edge_type == "contradiction" else (sentiment_attr or "MENTION")
-    assert resolved == "REFUTING"
-    assert _EDGE_STYLE[resolved]["dashes"] is True
+    unconditionally; edge_style_for() does the same regardless of whatever
+    (if anything) is in the edge's own sentiment attribute."""
+    style = graph_memory.edge_style_for("contradiction", None)
+    assert style == graph_memory.EDGE_STYLE["REFUTING"]
+    assert style["dashes"] is True
 
 
 def test_citation_edge_sentiment_resolves_to_correct_style():
     for sentiment in ("SUPPORTING", "MENTION", "REFUTING"):
-        edge_type = "citation"
-        resolved = "REFUTING" if edge_type == "contradiction" else (sentiment or "MENTION")
-        assert resolved == sentiment
-        assert resolved in _EDGE_STYLE
+        assert graph_memory.edge_style_for("citation", sentiment) == graph_memory.EDGE_STYLE[sentiment]
 
 
 def test_citation_edge_missing_sentiment_defaults_to_mention_style():
-    edge_type, sentiment_attr = "citation", None
-    resolved = "REFUTING" if edge_type == "contradiction" else (sentiment_attr or "MENTION")
-    assert resolved == "MENTION"
-    assert _EDGE_STYLE[resolved] == {"color": "#95a5a6", "width": 1, "dashes": False}
+    assert graph_memory.edge_style_for("citation", None) == graph_memory.EDGE_STYLE["MENTION"]
+
+
+# --------------------------------------------------------------------------
+# Node rendering calibration: radius strictly proportional to S_posterior,
+# continuous fill-color gradient over log10(N+1), categorical border style.
+# --------------------------------------------------------------------------
+
+
+def test_node_radius_matches_spec_formula():
+    assert graph_memory.node_radius(0.0) == 12.0
+    assert graph_memory.node_radius(1.0) == 40.0
+    assert graph_memory.node_radius(0.5) == 26.0
+
+
+def test_node_radius_clamps_out_of_range_scores():
+    assert graph_memory.node_radius(-5.0) == 12.0
+    assert graph_memory.node_radius(5.0) == 40.0
+    assert graph_memory.node_radius(None) == 12.0
+
+
+def test_node_fill_color_low_and_high_endpoints():
+    assert graph_memory.node_fill_color(0) == "#CBD5E1"
+    assert graph_memory.node_fill_color(2000) == "#0284C7"
+    assert graph_memory.node_fill_color(50000) == "#0284C7"  # clamped past the ceiling
+
+
+def test_node_fill_color_interpolates_monotonically_with_n():
+    """As N grows, every RGB channel should move monotonically from the
+    low-N endpoint toward the high-N endpoint — never overshoot, never
+    reverse direction partway through the domain."""
+    def as_rgb(hexcolor):
+        h = hexcolor.lstrip("#")
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+    samples = [0, 10, 100, 1000, 2000]
+    colors = [as_rgb(graph_memory.node_fill_color(n)) for n in samples]
+    for channel in range(3):
+        values = [c[channel] for c in colors]
+        low_endpoint, high_endpoint = graph_memory.NODE_COLOR_LOW[channel], graph_memory.NODE_COLOR_HIGH[channel]
+        expected_order = sorted(values, reverse=(high_endpoint < low_endpoint))
+        assert values == expected_order
+
+
+def test_node_border_style_priority_quarantined_over_ood_over_prereg():
+    assert graph_memory.node_border_style(is_quarantined=True, is_ood=True, is_preregistered=True) == \
+        graph_memory.NODE_BORDER_STYLE["quarantined"]
+    assert graph_memory.node_border_style(is_ood=True, is_preregistered=True) == \
+        graph_memory.NODE_BORDER_STYLE["ood"]
+    assert graph_memory.node_border_style(is_preregistered=True) == \
+        graph_memory.NODE_BORDER_STYLE["preregistered"]
+    assert graph_memory.node_border_style() == graph_memory.NODE_BORDER_STYLE["default"]
+
+
+def test_node_border_style_colors_match_spec():
+    assert graph_memory.NODE_BORDER_STYLE["preregistered"] == {"color": "#10B981", "width": 3, "dashes": False}
+    assert graph_memory.NODE_BORDER_STYLE["ood"] == {"color": "#8B5CF6", "width": 3, "dashes": False}
+    assert graph_memory.NODE_BORDER_STYLE["quarantined"] == {"color": "#EF4444", "width": 3, "dashes": True}
+
+
+# --------------------------------------------------------------------------
+# Prior state persistence & management (ui.py Tab 2: export / import / reset).
+# --------------------------------------------------------------------------
+
+
+def test_export_priors_round_trips_through_import_priors():
+    conn = _fresh_db()
+    graph_memory.record_feedback(conn, tier="Retrospective", action="confirm", pmid="1")
+    exported = graph_memory.export_priors(conn)
+    assert "tiers" in exported and "Retrospective" in exported["tiers"]
+    assert exported["tiers"]["Retrospective"]["alpha"] == 9.0  # 8 + 1 from the confirm above
+
+    fresh = _fresh_db()  # a second, independent store to import into
+    n_updated = graph_memory.import_priors(fresh, exported, trigger_source="import")
+    assert n_updated == len(exported["tiers"])
+    assert graph_memory.get_current_prior_hyperparams(fresh)["Retrospective"] == (9.0, 12.0)
+    conn.close()
+    fresh.close()
+
+
+def test_import_priors_accepts_bare_tier_mapping_without_wrapper():
+    conn = _fresh_db()
+    n = graph_memory.import_priors(conn, {"Retrospective": {"alpha": 5.0, "beta": 5.0}})
+    assert n == 1
+    assert graph_memory.get_current_prior_hyperparams(conn)["Retrospective"] == (5.0, 5.0)
+    conn.close()
+
+
+def test_import_priors_skips_non_positive_or_malformed_entries():
+    conn = _fresh_db()
+    before = graph_memory.get_current_prior_hyperparams(conn)["Retrospective"]
+    n = graph_memory.import_priors(conn, {
+        "Retrospective": {"alpha": 0.0, "beta": 5.0},  # non-positive alpha, skipped
+        "Meta-Analysis": {"alpha": "oops"},  # malformed, skipped
+    })
+    assert n == 0
+    assert graph_memory.get_current_prior_hyperparams(conn)["Retrospective"] == before
+    conn.close()
+
+
+def test_reset_priors_to_default_restores_seed_values():
+    conn = _fresh_db()
+    graph_memory.record_feedback(conn, tier="Retrospective", action="reject", pmid="1")
+    graph_memory.record_feedback(conn, tier="Meta-Analysis", action="reject", pmid="2")
+    assert graph_memory.get_current_prior_hyperparams(conn)["Retrospective"] != graph_memory.SEED_BETA_PRIORS["Retrospective"]
+
+    n_reset = graph_memory.reset_priors_to_default(conn)
+    assert n_reset == len(graph_memory.SEED_BETA_PRIORS)
+    hyperparams = graph_memory.get_current_prior_hyperparams(conn)
+    for tier, seed in graph_memory.SEED_BETA_PRIORS.items():
+        assert hyperparams[tier] == seed
+    conn.close()
+
+
+def test_reset_priors_to_default_leaves_ood_tiers_untouched():
+    conn = _fresh_db()
+    graph_memory.get_prior_credence(conn, "Organ-on-a-Chip", 10)  # registers a Jeffreys-prior OOD tier
+    graph_memory.reset_priors_to_default(conn)
+    assert graph_memory.get_current_prior_hyperparams(conn)["Organ-on-a-Chip"] == \
+        (graph_memory.JEFFREYS_ALPHA, graph_memory.JEFFREYS_BETA)
+    conn.close()
+
+
+def test_reset_priors_to_default_snapshots_calibration_history():
+    conn = _fresh_db()
+    before = len(graph_memory.get_calibration_history_df(conn))
+    graph_memory.reset_priors_to_default(conn)
+    after_df = graph_memory.get_calibration_history_df(conn)
+    assert len(after_df) == before + len(graph_memory.SEED_BETA_PRIORS)
+    assert set(after_df[after_df["trigger_source"] == "reset"]["tier"]) == set(graph_memory.SEED_BETA_PRIORS)
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# run_pipeline(): agent.py's CLI (main()) and ui.py's "Live PubMed Search"
+# sidebar mode share exactly one pipeline implementation.
+# --------------------------------------------------------------------------
+
+
+def test_run_pipeline_is_importable_with_expected_signature():
+    import inspect
+
+    import agent
+
+    sig = inspect.signature(agent.run_pipeline)
+    for param in ("query", "max_results", "model", "output", "db", "seed", "progress_cb"):
+        assert param in sig.parameters, f"run_pipeline() is missing expected parameter {param!r}"
+
+
+def test_run_pipeline_raises_pipeline_error_without_api_key():
+    """No monkeypatch fixture here — this file's __main__ runner calls tests
+    directly (no pytest fixture injection), so state is saved/restored by
+    hand like every other test in this module."""
+    import os
+
+    import agent
+
+    had_key = "GEMINI_API_KEY" in os.environ
+    saved = os.environ.pop("GEMINI_API_KEY", None)
+    try:
+        try:
+            agent.run_pipeline(query="x", max_results=5)
+            assert False, "expected PipelineError"
+        except agent.PipelineError:
+            pass
+    finally:
+        if had_key:
+            os.environ["GEMINI_API_KEY"] = saved
 
 
 if __name__ == "__main__":

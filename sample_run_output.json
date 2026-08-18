@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-18T13:22:36.124771",
+  "generated_at": "2026-08-18T17:35:44.832303",
   "query": "Semaglutide AND (\"NASH\" OR \"MASH\") AND fibrosis",
   "model": "gemini-flash-lite-latest",
   "papers_fetched": 10,
@@ -186,7 +186,7 @@
         "is_relevant": true,
         "study_design": "RCT",
         "sample_size": 320,
-        "claim_hyperbole": 2,
+        "claim_hyperbole": 1,
         "ci_lower": null,
         "ci_upper": null,
         "p_value": 0.001,
@@ -311,6 +311,51 @@
     },
     {
       "metadata": {
+        "pmid": "38851997",
+        "title": "EASL-EASD-EASO Clinical Practice Guidelines on the management of metabolic dysfunction-associated steatotic liver disease (MASLD).",
+        "abstract": "Metabolic dysfunction-associated steatotic liver disease (MASLD), previously termed non-alcoholic fatty liver disease (NAFLD), is defined as steatotic liver disease (SLD) in the presence of one or more cardiometabolic risk factor(s) and the absence of harmful alcohol intake. The spectrum of MASLD includes steatosis, metabolic dysfunction-associated steatohepatitis (MASH, previously NASH), fibrosis, cirrhosis and MASH-related hepatocellular carcinoma (HCC). This joint EASL-EASD-EASO guideline provides an update on definitions, prevention, screening, diagnosis and treatment for MASLD. Case-finding strategies for MASLD with liver fibrosis, using non-invasive tests, should be applied in individuals with cardiometabolic risk factors, abnormal liver enzymes, and/or radiological signs of hepatic steatosis, particularly in the presence of type 2 diabetes (T2D) or obesity with additional metabolic risk factor(s). A stepwise approach using blood-based scores (such as FIB-4) and, sequentially, imaging techniques (such as transient elastography) is suitable to rule-out/in advanced fibrosis, which is predictive of liver-related outcomes. In adults with MASLD, lifestyle modification - including weight loss, dietary changes, physical exercise and discouraging alcohol consumption - as well as optimal management of comorbidities - including use of incretin-based therapies (e.g. semaglutide, tirzepatide) for T2D or obesity, if indicated - is advised. Bariatric surgery is also an option in individuals with MASLD and obesity. If locally approved and dependent on the label, adults with non-cirrhotic MASH and significant liver fibrosis (stage \u22652) should be considered for a MASH-targeted treatment with resmetirom, which demonstrated histological effectiveness on steatohepatitis and fibrosis with an acceptable safety and tolerability profile. No MASH-targeted pharmacotherapy can currently be recommended for the cirrhotic stage. Management of MASH-related cirrhosis includes adaptations of metabolic drugs, nutritional counselling, surveillance for portal hypertension and HCC, as well as liver transplantation in decompensated cirrhosis.",
+        "authors": [
+          "European Association for the Study of the Liver (EASL)",
+          "European Association for the Study of Diabetes (EASD)",
+          "European Association for the Study of Obesity (EASO)"
+        ],
+        "publication_year": 2024,
+        "citations": 163,
+        "citations_mocked": true,
+        "doi": "10.1016/j.jhep.2024.04.031",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/38851997/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Review/Opinion",
+        "sample_size": 0,
+        "claim_hyperbole": 1,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
+      },
+      "base_prior_credence": 0.15,
+      "preregistration_bonus": 0.0,
+      "prior_credence": 0.15,
+      "rigor_baseline": 0.75,
+      "discrepancy_index": 0.25,
+      "sample_power_weight": 0.0,
+      "discrepancy_adjusted": 0.5,
+      "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 54.333,
+      "velocity_norm": 0.269,
+      "posterior_score": 0.1797,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": [],
+      "surrogate_action": null,
+      "surrogate_confidence": null
+    },
+    {
+      "metadata": {
         "pmid": "41212550",
         "title": "Metabolic Dysfunction-Associated Steatotic Liver Disease in Adults: A Review.",
         "abstract": "Metabolic dysfunction-associated steatotic liver disease (MASLD) includes a range of liver conditions, progressing from isolated steatosis (characterized by fat accumulation in the liver without inflammation) to metabolic dysfunction-associated steatohepatitis (MASH), which involves fat accumulation and inflammation in the liver. The presence of MASLD is associated with increased morbidity and mortality due to liver-related complications, hepatocellular carcinoma, cardiovascular disease, and certain extrahepatic cancers. The most common chronic liver disease worldwide, MASLD affects approximately 30% to 40% of the general adult population globally (with varying prevalence across continents), including approximately 60% to 70% of individuals with type 2 diabetes and approximately 70% to 80% of those with obesity. It is typically diagnosed based on an ultrasonographic finding of hepatic steatosis, along with at least 1 of 5 features of the metabolic syndrome (abdominal overweight or obesity, prediabetes or type 2 diabetes, hypertension, elevated level of plasma triglycerides, and low level of high-density lipoprotein cholesterol) for women who consume less than 140 g/wk of alcohol (<2 standard drinks/d) and for men who consume less than 210 g/wk (<3 standard drinks/d) and have no other known causes of steatosis such as use of a particular medication (eg, corticosteroids, tamoxifen, or methotrexate), hepatitis C, or iron overload. Other risk factors for MASLD include older age (\u226550 years) and male sex (male:female ratio approximately 2). The Fibrosis-4 index (a scoring system incorporating age, serum levels of aspartate aminotransferase and alanine aminotransferase, and platelet count) and vibration-controlled transient elastography (a noninvasive imaging technique) are commonly used to stage hepatic fibrosis in patients with MASLD. Cardiovascular disease is the leading cause of death, followed by certain extrahepatic cancers (primarily gastrointestinal, breast, and gynecologic cancer) and liver-related complications, including cirrhosis, hepatic decompensation (ascites, hepatic encephalopathy, or variceal bleeding), and hepatocellular carcinoma. First-line treatment of MASLD involves behavioral modifications (including hypocaloric low-carbohydrate and low-fat diets, physical exercise, and avoidance of alcohol) and management of type 2 diabetes, obesity, hypertension, and hyperlipidemia. Bariatric surgery should be considered for patients with MASLD and a body mass index greater than 35. Resmetirom (a liver-directed, thyroid hormone receptor \u03b2-selective agonist) and subcutaneous semaglutide (a glucagon-like peptide-1 receptor agonist) are conditionally approved by the US Food and Drug Administration (FDA) for the treatment of adults with MASH who have moderate to advanced fibrosis. A highly prevalent condition among adults worldwide, MASLD is associated with liver-related complications, hepatocellular carcinoma, cardiovascular disease, and certain extrahepatic cancers. First-line treatment includes behavioral modifications, including a weight-reducing diet, physical exercise, and avoidance of alcohol. Resmetirom and semaglutide are conditionally FDA-approved medications for the treatment of adults with MASH and moderate to advanced fibrosis.",
@@ -349,51 +394,6 @@
       "velocity_raw": 6.0,
       "velocity_norm": 0.004,
       "posterior_score": 0.1136,
-      "is_ood_design": false,
-      "audit_status": "PASSED",
-      "audit_reasons": [],
-      "surrogate_action": null,
-      "surrogate_confidence": null
-    },
-    {
-      "metadata": {
-        "pmid": "39609545",
-        "title": "Therapeutic landscape of metabolic dysfunction-associated steatohepatitis (MASH).",
-        "abstract": "Metabolic dysfunction-associated steatotic liver disease (MASLD)\u00a0and its severe subgroup metabolic dysfunction-associated steatohepatitis (MASH) have become a global epidemic and are driven by chronic overnutrition and multiple genetic susceptibility factors. The physiological outcomes include hepatocyte death, liver inflammation and cirrhosis. The first therapeutic for MASLD and MASH, resmetirom, has recently been approved for clinical use and has energized this therapeutic space. However, there is still much to learn in clinical studies of MASH, such as the scale of placebo responses, optimal trial end points, the time required for fibrosis reversal and side effect profiles. This Review introduces aspects of disease pathogenesis related to drug development and discusses two main therapeutic approaches. Thyroid hormone receptor-\u03b2 agonists, such as resmetirom, as well as fatty acid synthase inhibitors, target the liver and enable it to function within a toxic metabolic environment. In parallel, incretin analogues such as semaglutide improve metabolism, allowing the liver to self-regulate and reversing many aspects of MASH. We also discuss how combinations of therapeutics could potentially be used to treat patients.",
-        "authors": [
-          "Albert Do",
-          "Frhaan Zahrawi",
-          "Wajahat Z Mehal"
-        ],
-        "publication_year": 2025,
-        "citations": 70,
-        "citations_mocked": true,
-        "doi": "10.1038/s41573-024-01084-2",
-        "url": "https://pubmed.ncbi.nlm.nih.gov/39609545/"
-      },
-      "telemetry": {
-        "is_relevant": true,
-        "study_design": "Review/Opinion",
-        "sample_size": 0,
-        "claim_hyperbole": 2,
-        "ci_lower": null,
-        "ci_upper": null,
-        "p_value": null,
-        "is_preregistered": false
-      },
-      "base_prior_credence": 0.15,
-      "preregistration_bonus": 0.0,
-      "prior_credence": 0.15,
-      "rigor_baseline": 0.75,
-      "discrepancy_index": 1.25,
-      "sample_power_weight": 0.0,
-      "discrepancy_adjusted": 2.5,
-      "likelihood_penalty": 0.3679,
-      "standard_error": null,
-      "precision_penalty": 1.0,
-      "velocity_raw": 35.0,
-      "velocity_norm": 0.163,
-      "posterior_score": 0.0821,
       "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": [],
@@ -614,19 +614,19 @@
       {
         "pmid": "40736113",
         "rank": 1,
-        "justification": "This meta-analysis secured the top rank by combining a high prior credence of 0.95 with a robust sample size of 1,811 and a moderate claim hyperbole of 2/5. Because its claims did not outrun its design, it incurred no penalty, maintaining a likelihood penalty of 1.0. Furthermore, its citation velocity of 0.127 provided the decisive final boost to edge out the competition."
+        "justification": "This paper achieved the top rank by combining a meta-analysis study design with a sample_size of 1811 and a moderate claim_hyperbole of 2/5. Its prior_credence stood strong at 0.95, and because the claims matched the design, the likelihood_penalty was a clean 1.0. These solid methodological metrics drove its posterior score to 0.7444, slightly edging out the competition."
       },
       {
         "pmid": "39412509",
         "rank": 2,
-        "justification": "This randomized controlled trial achieved a strong prior credence of 0.95, which included a 0.05 preregistration bonus alongside its base prior of 0.9. Operating with a sample size of 800 and a low claim hyperbole of 1/5, it completely avoided overstating its conclusions and retained a likelihood penalty of 1.0. A slightly lower citation velocity of 0.085 placed it just behind the top-ranked meta-analysis."
+        "justification": "Securing the second rank, this RCT features a sample_size of 800 and a low claim_hyperbole of 1/5 alongside a preregistration bonus. It matched the top paper's prior_credence of 0.95 and also earned a favorable likelihood_penalty of 1.0 due to its restrained claims. Despite a slightly lower velocity norm, its robust design kept it firmly competitive with a posterior score of 0.7337."
       },
       {
         "pmid": "39903735",
         "rank": 3,
-        "justification": "This systematic review and network meta-analysis evaluated a massive sample size of 9,324 while maintaining a prior credence of 0.95 and a claim hyperbole of 2/5. Like the other papers, it suffered no overreach, yielding a likelihood penalty of 1.0. However, its modest citation velocity of 0.048 pulled its final posterior score slightly below the other two papers."
+        "justification": "Landing in the third position, this meta-analysis boasts the largest sample_size of 9324 paired with a claim_hyperbole of 2/5. It shares the baseline prior_credence of 0.95 and a perfect likelihood_penalty of 1.0 because its conclusions fit the evidence. Ultimately, a lower citation velocity normalized value resulted in a slightly trailing posterior score of 0.7245."
       }
     ],
-    "overall_defense": "Citation velocity was the decisive factor separating the top three ranks, as all three papers shared an identical prior credence of 0.95 and clean likelihood penalties of 1.0 due to minimal claim hyperbole. The ranking sequence strictly tracks descending velocity values from 0.127 down to 0.048, proving that when methodological quality and design priors are tied, community engagement speed determines the winner. final order. This outcome is entirely defensible under the Bayesian update formula where the 25 percent velocity weight breaks deadlocks among methodologically sound studies."
+    "overall_defense": "Because all three papers shared identical prior credences of 0.95 and pristine likelihood penalties of 1.0 due to controlled hyperbole, neither the prior nor the likelihood penalty decided the ordering. Instead, citation velocity was the decisive factor separating the ranks, rewarding the papers with higher normalized velocity scores. This outcome is fully defensible under the Bayesian update formula, where equal methodological rigor naturally defers to empirical momentum in the final weighting."
   }
 }
