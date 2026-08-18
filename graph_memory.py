@@ -70,15 +70,35 @@ DESIGN_TO_BETA_TIER: dict[str, str] = {
 # heuristic, not a measurement: an RCT with N >= this is assumed Phase III.
 RCT_PHASE_III_MIN_N = 300
 
+KNOWN_TIERS = frozenset(SEED_BETA_PRIORS.keys())
+
+# Uninformative Jeffreys prior for a design tier we've never seen before —
+# e.g. an LLM-reported study_design like "Mendelian Randomization" or
+# "Organ-on-a-Chip" that doesn't fit any of the 6 known tiers.
+# PaperTelemetry.study_design is a free-text str specifically so the
+# extraction step isn't forced to mis-bucket a genuinely novel design; this
+# is the other half of that contract — the scoring/prior layer must never
+# crash or silently borrow an unrelated tier's credence when it meets one.
+# Beta(0.5, 0.5) gives E[P(E)]=0.5 (maximally noncommittal) and is also the
+# maximum-variance member of the Beta(a,a) family on [0,1] (Var=0.125) —
+# appropriately uncertain rather than falsely confident either way.
+JEFFREYS_ALPHA = 0.5
+JEFFREYS_BETA = 0.5
+JEFFREYS_MEAN = JEFFREYS_ALPHA / (JEFFREYS_ALPHA + JEFFREYS_BETA)  # 0.5
+
 
 def beta_tier_for(study_design: str, sample_size: int) -> str:
-    """Resolve a (study_design, sample_size) telemetry pair to one of the 6
-    seeded Beta tiers. RCT is split by an N-based phase heuristic so that
-    all 6 seed tiers are actually reachable; every other design maps
-    directly via DESIGN_TO_BETA_TIER."""
+    """Resolve a (study_design, sample_size) telemetry pair to a Beta tier.
+    RCT is split by an N-based phase heuristic so both seeded RCT tiers are
+    reachable; the 4 other known designs map directly via
+    DESIGN_TO_BETA_TIER. Anything else is treated as its OWN out-of-
+    distribution tier, named after the design string itself, rather than
+    silently folded into an unrelated known tier — see get_prior_credence()
+    for how that tier then gets an uninformative Jeffreys prior instead of
+    a KeyError or a borrowed number."""
     if study_design == "RCT":
         return "Phase III RCT" if sample_size >= RCT_PHASE_III_MIN_N else "Phase II RCT"
-    return DESIGN_TO_BETA_TIER.get(study_design, "Retrospective")
+    return DESIGN_TO_BETA_TIER.get(study_design, study_design)
 
 
 def seed_prior_means() -> dict[str, float]:
@@ -110,6 +130,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     likelihood_penalty REAL,
     posterior_score   REAL,
     audit_status      TEXT DEFAULT 'PASSED',
+    url               TEXT,
+    doi               TEXT,
     updated_at        TEXT
 );
 
@@ -117,6 +139,7 @@ CREATE TABLE IF NOT EXISTS edges (
     src        TEXT NOT NULL,
     dst        TEXT NOT NULL,
     edge_type  TEXT NOT NULL,   -- 'citation' | 'contradiction'
+    sentiment  TEXT,            -- 'SUPPORTING' | 'MENTION' | 'REFUTING'
     detail     TEXT,
     created_at TEXT,
     PRIMARY KEY (src, dst, edge_type)
@@ -137,12 +160,26 @@ CREATE TABLE IF NOT EXISTS feedback_log (
 """
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
+    """`CREATE TABLE IF NOT EXISTS` only helps on a brand-new database — an
+    already-committed epistemic_memory.db from an earlier version of this
+    schema still lacks any column added since. SQLite has no
+    `ADD COLUMN IF NOT EXISTS`, so this checks PRAGMA table_info() first."""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
 def init_db(db_path: str = DB_PATH_DEFAULT) -> sqlite3.Connection:
     """Open (creating if needed) the persistent store, ensure the schema
-    exists, and seed design_priors from SEED_BETA_PRIORS the first time.
-    Safe to call repeatedly — existing rows are never overwritten."""
+    exists (migrating an older on-disk schema forward if needed), and seed
+    design_priors from SEED_BETA_PRIORS the first time. Safe to call
+    repeatedly — existing rows are never overwritten."""
     conn = sqlite3.connect(db_path)
     conn.executescript(_SCHEMA_SQL)
+    _ensure_column(conn, "nodes", "url", "TEXT")
+    _ensure_column(conn, "nodes", "doi", "TEXT")
+    _ensure_column(conn, "edges", "sentiment", "TEXT")
     for tier, (a, b) in SEED_BETA_PRIORS.items():
         conn.execute(
             "INSERT OR IGNORE INTO design_priors (tier, alpha, beta) VALUES (?, ?, ?)",
@@ -232,6 +269,47 @@ def record_feedback(
     return new_alpha, new_beta
 
 
+def register_novel_tier(conn: sqlite3.Connection, tier: str) -> tuple[float, float]:
+    """Dynamically register a study-design tier the seed table doesn't
+    know about, with the uninformative Jeffreys prior Beta(0.5, 0.5).
+    Idempotent (INSERT OR IGNORE) — calling it again for a tier that now
+    exists (because a human has since given feedback on it) is a no-op and
+    does NOT reset that learning back to the Jeffreys prior."""
+    conn.execute(
+        "INSERT OR IGNORE INTO design_priors (tier, alpha, beta) VALUES (?, ?, ?)",
+        (tier, JEFFREYS_ALPHA, JEFFREYS_BETA),
+    )
+    conn.commit()
+    row = conn.execute("SELECT alpha, beta FROM design_priors WHERE tier = ?", (tier,)).fetchone()
+    return tuple(row)
+
+
+def get_prior_credence(conn: sqlite3.Connection, study_design: str, sample_size: int) -> float:
+    """Live, DB-backed prior lookup for ONE paper: resolve to a Beta tier
+    via beta_tier_for(), and if that tier doesn't exist in the store yet —
+    a genuinely out-of-distribution design, e.g. an LLM-reported
+    'Mendelian Randomization' or 'Organ-on-a-Chip' study that doesn't fit
+    any of the 6 known tiers — register it with the Jeffreys prior instead
+    of raising or silently borrowing an unrelated tier's number. This is
+    the function agent.py's main() calls once per paper (a cheap side
+    effect: at most one INSERT) to make sure every design actually present
+    in a batch has a row before prior_lookup is loaded for scoring."""
+    tier = beta_tier_for(study_design, sample_size)
+    row = conn.execute("SELECT alpha, beta FROM design_priors WHERE tier = ?", (tier,)).fetchone()
+    if row is None:
+        alpha, beta = register_novel_tier(conn, tier)
+    else:
+        alpha, beta = row
+    return alpha / (alpha + beta)
+
+
+def is_ood_tier(tier: str) -> bool:
+    """True if `tier` isn't one of the 6 originally-seeded Beta tiers —
+    i.e. it was dynamically registered via register_novel_tier() for an
+    out-of-distribution study design."""
+    return tier not in KNOWN_TIERS
+
+
 # --------------------------------------------------------------------------
 # Knowledge graph persistence
 # --------------------------------------------------------------------------
@@ -249,21 +327,24 @@ def upsert_node(
     likelihood_penalty: float,
     posterior_score: float,
     audit_status: str = "PASSED",
+    url: Optional[str] = None,
+    doi: Optional[str] = None,
 ) -> None:
     conn.execute(
         "INSERT INTO nodes (pmid, title, study_design, sample_size, prior_credence, "
-        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, url, doi, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(pmid) DO UPDATE SET "
         "title=excluded.title, study_design=excluded.study_design, "
         "sample_size=excluded.sample_size, prior_credence=excluded.prior_credence, "
         "discrepancy_index=excluded.discrepancy_index, "
         "likelihood_penalty=excluded.likelihood_penalty, "
         "posterior_score=excluded.posterior_score, audit_status=excluded.audit_status, "
-        "updated_at=excluded.updated_at",
+        "url=excluded.url, doi=excluded.doi, updated_at=excluded.updated_at",
         (
             pmid, title, study_design, sample_size, prior_credence,
-            discrepancy_index, likelihood_penalty, posterior_score, audit_status, _now(),
+            discrepancy_index, likelihood_penalty, posterior_score, audit_status,
+            url, doi, _now(),
         ),
     )
     conn.commit()
@@ -278,12 +359,21 @@ def set_audit_status(conn: sqlite3.Connection, pmid: str, status: str) -> None:
 
 
 def add_edge(
-    conn: sqlite3.Connection, src: str, dst: str, edge_type: str, detail: str = ""
+    conn: sqlite3.Connection,
+    src: str,
+    dst: str,
+    edge_type: str,
+    detail: str = "",
+    sentiment: Optional[str] = None,
 ) -> None:
+    """sentiment is one of 'SUPPORTING' / 'MENTION' / 'REFUTING' for
+    citation edges (see fetch_citation_edges_from_pubmed); contradiction
+    edges are conventionally tagged 'REFUTING' by their caller, since a
+    detected contradiction IS a refuting relationship by definition."""
     conn.execute(
-        "INSERT OR REPLACE INTO edges (src, dst, edge_type, detail, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (src, dst, edge_type, detail, _now()),
+        "INSERT OR REPLACE INTO edges (src, dst, edge_type, sentiment, detail, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (src, dst, edge_type, sentiment, detail, _now()),
     )
     conn.commit()
 
@@ -297,9 +387,9 @@ def load_graph(conn: sqlite3.Connection):
     g = nx.DiGraph()
     for row in conn.execute(
         "SELECT pmid, title, study_design, sample_size, prior_credence, "
-        "discrepancy_index, likelihood_penalty, posterior_score, audit_status FROM nodes"
+        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, url, doi FROM nodes"
     ):
-        pmid, title, design, n, prior, d, lik, score, status = row
+        pmid, title, design, n, prior, d, lik, score, status, url, doi = row
         g.add_node(
             pmid,
             title=title,
@@ -310,10 +400,13 @@ def load_graph(conn: sqlite3.Connection):
             likelihood_penalty=lik,
             posterior_score=score,
             audit_status=status,
+            url=url,
+            doi=doi,
+            is_ood_design=is_ood_tier(beta_tier_for(design, n or 0)),
         )
-    for row in conn.execute("SELECT src, dst, edge_type, detail FROM edges"):
-        src, dst, edge_type, detail = row
-        g.add_edge(src, dst, edge_type=edge_type, detail=detail)
+    for row in conn.execute("SELECT src, dst, edge_type, sentiment, detail FROM edges"):
+        src, dst, edge_type, sentiment, detail = row
+        g.add_edge(src, dst, edge_type=edge_type, sentiment=sentiment, detail=detail)
     return g
 
 
@@ -324,13 +417,46 @@ def load_graph(conn: sqlite3.Connection):
 # --------------------------------------------------------------------------
 
 
+def citation_sentiment(
+    src: str, dst: str, texts: Optional[dict[str, tuple[str, str]]]
+) -> str:
+    """Heuristic sentiment for a citation edge src->dst, reusing the SAME
+    outcome-direction heuristic as detect_contradictions(): if both papers'
+    abstracts report the same non-neutral outcome direction, the citation
+    is tagged SUPPORTING; opposite directions, REFUTING; anything ambiguous
+    (either side's direction is neutral/undetermined, or we don't have that
+    paper's text) defaults to MENTION. Pure and network-free — this is the
+    same disclosed keyword heuristic as contradiction detection, not a real
+    citation-context classifier (that would require reading how paper A
+    actually characterizes paper B in its own text, which we don't have)."""
+    if not texts:
+        return "MENTION"
+    src_text = texts.get(src)
+    dst_text = texts.get(dst)
+    if not src_text or not dst_text:
+        return "MENTION"
+    dir_src = infer_outcome_direction(*src_text)
+    dir_dst = infer_outcome_direction(*dst_text)
+    if dir_src == 0 or dir_dst == 0:
+        return "MENTION"
+    return "SUPPORTING" if dir_src == dir_dst else "REFUTING"
+
+
 def fetch_citation_edges_from_pubmed(
-    pmids: list[str], email: str, api_key: Optional[str] = None
-) -> list[tuple[str, str]]:
+    pmids: list[str],
+    email: str,
+    api_key: Optional[str] = None,
+    texts: Optional[dict[str, tuple[str, str]]] = None,
+) -> list[tuple[str, str, str]]:
     """Uses Bio.Entrez.elink (pubmed_pubmed_refs) to find which of our
     fetched papers cite which others *within the same batch*. Real PubMed
     link data, not mocked — unlike citation *counts* (see README), the
-    link-graph endpoint is free and needs no extra registration."""
+    link-graph endpoint is free and needs no extra registration.
+
+    Returns (src, dst, sentiment) triples. `texts` — {pmid: (title,
+    abstract)} — is optional; without it every edge is tagged 'MENTION'
+    (no sentiment signal available), which is what happens if the caller
+    doesn't have title/abstract handy rather than crashing."""
     from Bio import Entrez
 
     Entrez.email = email
@@ -338,7 +464,7 @@ def fetch_citation_edges_from_pubmed(
         Entrez.api_key = api_key
 
     pmid_set = set(pmids)
-    edges: list[tuple[str, str]] = []
+    edges: list[tuple[str, str, str]] = []
     with Entrez.elink(
         dbfrom="pubmed", db="pubmed", id=pmids, linkname="pubmed_pubmed_refs"
     ) as handle:
@@ -353,7 +479,7 @@ def fetch_citation_edges_from_pubmed(
             for link in linksetdb.get("Link", []):
                 dst = str(link.get("Id", ""))
                 if dst and dst in pmid_set and dst != src:
-                    edges.append((src, dst))
+                    edges.append((src, dst, citation_sentiment(src, dst, texts)))
     return edges
 
 

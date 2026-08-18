@@ -33,7 +33,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
@@ -110,14 +110,38 @@ LIKELIHOOD_DECAY_K = 0.5  # exp(-k * D): higher k = harsher penalty per unit of 
 W_PRIOR = 0.75  # weight on prior*likelihood (rigor + claim-calibration)
 W_VELOCITY = 0.25  # weight on citation velocity (attention, not validity)
 
-StudyDesign = Literal[
+# These 6 categories are the ones our Beta-tier system knows out of the box
+# (see graph_memory.SEED_BETA_PRIORS) and the ones the extraction prompt
+# lists as preferred. PaperTelemetry.study_design is NOT restricted to this
+# list, though — it's a free-text str, deliberately, so a genuinely novel
+# design (e.g. "Mendelian Randomization") can be reported honestly instead
+# of forced into the wrong bucket. See graph_memory.get_prior_credence()
+# for how an out-of-distribution design gets an uninformative Jeffreys
+# prior instead of crashing or borrowing an unrelated tier's credence.
+KNOWN_STUDY_DESIGNS = (
     "Meta-Analysis",
     "RCT",
     "Prospective Cohort",
     "Retrospective/Observational",
     "In-Vitro/Animal",
     "Review/Opinion",
-]
+)
+
+# Statistical precision penalty (from reported 95% CI bounds, when given):
+# SE = (ci_upper - ci_lower) / 3.92 is the standard normal-approximation
+# formula (a 95% CI spans ~1.96 SE on each side of the estimate). A wide CI
+# for the same design/hyperbole means the underlying estimate is noisier
+# than the claim lets on, so it discounts credence the same shape as the
+# Discrepancy Index does — smoothly, past a tolerance threshold, never for
+# papers that simply didn't report CI bounds at all (SE=None -> no penalty).
+SE_PENALTY_THRESHOLD = 0.5
+PRECISION_DECAY_K = 0.5
+
+# Preregistration bonus: a trial registry ID (NCT/ISRCTN/...) makes
+# after-the-fact outcome-switching and cherry-picking harder to get away
+# with, so it's worth a small, capped boost to the design-tier prior — not
+# a new evidence tier of its own, just a modifier on top of one.
+PREREGISTRATION_BONUS = 0.05
 
 
 # --------------------------------------------------------------------------
@@ -135,6 +159,14 @@ class PaperMetadata(BaseModel):
     publication_year: int
     citations: int
     citations_mocked: bool = False
+    doi: Optional[str] = None
+    url: str = ""  # auto-filled from pmid below if not given explicitly
+
+    @model_validator(mode="after")
+    def _fill_url(self):
+        if not self.url:
+            self.url = f"https://pubmed.ncbi.nlm.nih.gov/{self.pmid}/"
+        return self
 
 
 class PaperTelemetry(BaseModel):
@@ -142,7 +174,10 @@ class PaperTelemetry(BaseModel):
 
     Deliberately narrow: the LLM is only allowed to report *what kind of
     evidence this is*, never *how good the evidence is*. That judgment is
-    reserved for the deterministic matrix in Module 3.
+    reserved for the deterministic matrix in Module 3. study_design is
+    intentionally a free-text str (not a Literal enum) so a genuinely novel
+    design isn't forced into the wrong known bucket — see
+    KNOWN_STUDY_DESIGNS and graph_memory.get_prior_credence().
     """
 
     is_relevant: bool = Field(
@@ -150,13 +185,37 @@ class PaperTelemetry(BaseModel):
         "(or a GLP-1 receptor agonist explicitly identified as semaglutide) "
         "and liver fibrosis / NASH / MASH outcomes."
     )
-    study_design: StudyDesign
+    study_design: str = Field(
+        description="Prefer one of: Meta-Analysis, RCT, Prospective Cohort, "
+        "Retrospective/Observational, In-Vitro/Animal, Review/Opinion. Only use a "
+        "different, more specific label (e.g. 'Mendelian Randomization', "
+        "'Organ-on-a-Chip') if the study's actual design genuinely doesn't fit any "
+        "of those — do not force a bad fit just to match the list."
+    )
     sample_size: int = Field(description="Extracted N. 0 if not explicitly stated.")
     claim_hyperbole: int = Field(
         ge=1,
         le=5,
         description="1 = cautious/grounded language. 5 = definitive causal "
         "claims the study design cannot actually support.",
+    )
+    ci_lower: Optional[float] = Field(
+        default=None,
+        description="Reported lower bound of the primary endpoint's 95% CI, if stated "
+        "(e.g. '95% CI: 1.2-3.4' -> 1.2). Null if not reported.",
+    )
+    ci_upper: Optional[float] = Field(
+        default=None,
+        description="Reported upper bound of the primary endpoint's 95% CI, if stated "
+        "(e.g. '95% CI: 1.2-3.4' -> 3.4). Null if not reported.",
+    )
+    p_value: Optional[float] = Field(
+        default=None,
+        description="Reported p-value for the primary endpoint, if stated. Null if not reported.",
+    )
+    is_preregistered: bool = Field(
+        description="True if a trial registry identifier (e.g. NCT#########, "
+        "ISRCTN########) is mentioned anywhere in the abstract."
     )
 
 
@@ -171,17 +230,24 @@ class ScoredPaper(BaseModel):
     metadata: PaperMetadata
     telemetry: PaperTelemetry
 
-    prior_credence: float  # P(E): design-tier prior, before seeing the claim
-    rigor_baseline: float  # P(E) * 5: the claim strength this tier can justify
+    base_prior_credence: float  # P(E) before the preregistration bonus, from the Beta tier mean
+    preregistration_bonus: float  # +0.05 if telemetry.is_preregistered, else 0.0
+    prior_credence: float  # EFFECTIVE P(E) actually used below = base + bonus, clipped [0,1]
+    rigor_baseline: float  # prior_credence * 5: the claim strength this tier can justify
     discrepancy_index: float  # D = claim_hyperbole - rigor_baseline (clamped >= 0)
     sample_power_weight: float  # W_N: log10(N+1), batch-normalized to [0, 1]
     discrepancy_adjusted: float  # D moderated by W_N (small-N overclaims hit harder)
     likelihood_penalty: float  # L(Absurdity) = exp(-k * max(0, D_adj - threshold))
 
+    standard_error: Optional[float] = None  # SE = (ci_upper - ci_lower) / 3.92, if CI reported
+    precision_penalty: float = 1.0  # exp(-k * max(0, SE - threshold)); 1.0 if no CI reported
+
     velocity_raw: float
     velocity_norm: float
 
-    posterior_score: float  # S_posterior = [P(E) * L] * 0.75 + V_norm * 0.25, clipped [0,1]
+    posterior_score: float  # S_posterior, clipped [0,1] — see score_one() for the full formula
+
+    is_ood_design: bool = False  # True if telemetry.study_design needed a Jeffreys-prior tier
 
     # Epistemic fail-safe / HITL gate (see detect_anomaly/apply_audit_flags):
     audit_status: Literal["PASSED", "FLAGGED", "OVERRIDDEN"] = "PASSED"
@@ -254,6 +320,19 @@ def fetch_pubmed(query: str, max_results: int) -> list[PaperMetadata]:
                 elif "CollectiveName" in a:
                     authors.append(str(a["CollectiveName"]))
 
+            # DOI: prefer ELocationID (EIdType='doi'); some records only carry
+            # it in PubmedData.ArticleIdList (IdType='doi') instead — check both.
+            doi = None
+            for eloc in art.get("ELocationID", []):
+                if getattr(eloc, "attributes", {}).get("EIdType") == "doi":
+                    doi = str(eloc)
+                    break
+            if doi is None:
+                for aid in article.get("PubmedData", {}).get("ArticleIdList", []):
+                    if getattr(aid, "attributes", {}).get("IdType") == "doi":
+                        doi = str(aid)
+                        break
+
             pub_date = art.get("Journal", {}).get("JournalIssue", {}).get("PubDate", {})
             year_str = pub_date.get("Year") or pub_date.get("MedlineDate", "")[:4]
             try:
@@ -276,6 +355,8 @@ def fetch_pubmed(query: str, max_results: int) -> list[PaperMetadata]:
                     publication_year=publication_year,
                     citations=citations,
                     citations_mocked=True,
+                    doi=doi,
+                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                 )
             )
         except Exception as e:  # noqa: BLE001 - one bad record shouldn't kill the batch
@@ -406,6 +487,9 @@ def score_one(
     w_n: float,
     v_norm: float,
     *,
+    ci_lower: Optional[float] = None,
+    ci_upper: Optional[float] = None,
+    is_preregistered: bool = False,
     w_prior: float = W_PRIOR,
     w_velocity: float = W_VELOCITY,
 ) -> dict:
@@ -413,12 +497,21 @@ def score_one(
     so it can be re-run standalone: once when scoring the full batch, again
     (with just a new `prior`) when a human operator manually clamps P(E) in
     the HITL gate, and again from ui.py when the Methodology/Velocity weight
-    sliders move. Keeping one implementation avoids the three call sites
-    drifting out of sync."""
-    rigor_baseline = prior * 5.0
+    sliders move. Keeping one implementation avoids drift across call sites.
+
+    `prior` here is the RAW design-tier prior (before preregistration); the
+    bonus is applied inside this function so every downstream quantity
+    (rigor_baseline, D, ...) is computed against the same effective prior
+    the posterior score itself uses — see `base_prior_credence` /
+    `preregistration_bonus` / `effective_prior_credence` in the return dict
+    for the full breakdown."""
+    preregistration_bonus = PREREGISTRATION_BONUS if is_preregistered else 0.0
+    effective_prior = clip01(prior + preregistration_bonus)
+    rigor_baseline = effective_prior * 5.0
 
     # Discrepancy Index D: how far the claim overshoots what this evidence
-    # tier can justify. Underclaiming (D < 0) is never penalized.
+    # tier (now including any preregistration credit) can justify.
+    # Underclaiming (D < 0) is never penalized.
     raw_d = claim_hyperbole - rigor_baseline
     d = max(0.0, raw_d)
 
@@ -432,13 +525,31 @@ def score_one(
     else:
         likelihood = 1.0  # no absurdity gate triggered — full credence retained
 
-    posterior = clip01((prior * likelihood) * w_prior + v_norm * w_velocity)
+    # Statistical Precision Penalty: SE from the reported 95% CI (the
+    # standard normal-approximation formula: a 95% CI spans ~1.96 SE either
+    # side of the point estimate, so width/3.92 = SE). A paper that didn't
+    # report CI bounds gets no penalty here — this discounts *reported but
+    # noisy* precision, it doesn't punish papers for omitting a CI (that's
+    # a separate, unmodeled concern).
+    standard_error = None
+    precision_penalty = 1.0
+    if ci_lower is not None and ci_upper is not None:
+        standard_error = abs(ci_upper - ci_lower) / 3.92
+        if standard_error > SE_PENALTY_THRESHOLD:
+            precision_penalty = math.exp(-PRECISION_DECAY_K * (standard_error - SE_PENALTY_THRESHOLD))
+
+    posterior = clip01((effective_prior * likelihood * precision_penalty) * w_prior + v_norm * w_velocity)
 
     return {
+        "base_prior_credence": prior,
+        "preregistration_bonus": preregistration_bonus,
+        "effective_prior_credence": effective_prior,
         "rigor_baseline": rigor_baseline,
         "discrepancy_index": d,
         "discrepancy_adjusted": d_adjusted,
         "likelihood_penalty": likelihood,
+        "standard_error": standard_error,
+        "precision_penalty": precision_penalty,
         "posterior_score": posterior,
     }
 
@@ -472,22 +583,46 @@ def score_papers(
     scored: list[ScoredPaper] = []
     for (meta, tele), v_raw, v_norm, w_n in zip(relevant, raw_velocities, velocity_norms, power_norms):
         tier = graph_memory.beta_tier_for(tele.study_design, tele.sample_size)
-        prior = prior_lookup[tier]
-        components = score_one(prior, tele.claim_hyperbole, w_n, v_norm)
+        # .get(..., JEFFREYS_MEAN) rather than prior_lookup[tier]: if the
+        # caller's prior_lookup doesn't have this tier yet (e.g. the pure
+        # seed_prior_means() default, which only knows the 6 seeded tiers,
+        # was used for a batch containing a genuinely novel design), that
+        # must degrade to the same uninformative Jeffreys mean
+        # graph_memory.get_prior_credence() would have registered — never
+        # a KeyError, per "do not fail on unknown categories".
+        prior = prior_lookup.get(tier, graph_memory.JEFFREYS_MEAN)
+        components = score_one(
+            prior,
+            tele.claim_hyperbole,
+            w_n,
+            v_norm,
+            ci_lower=tele.ci_lower,
+            ci_upper=tele.ci_upper,
+            is_preregistered=tele.is_preregistered,
+        )
 
         scored.append(
             ScoredPaper(
                 metadata=meta,
                 telemetry=tele,
-                prior_credence=round(prior, 4),
+                base_prior_credence=round(components["base_prior_credence"], 4),
+                preregistration_bonus=round(components["preregistration_bonus"], 4),
+                prior_credence=round(components["effective_prior_credence"], 4),
                 rigor_baseline=round(components["rigor_baseline"], 4),
                 discrepancy_index=round(components["discrepancy_index"], 4),
                 sample_power_weight=round(w_n, 4),
                 discrepancy_adjusted=round(components["discrepancy_adjusted"], 4),
                 likelihood_penalty=round(components["likelihood_penalty"], 4),
+                standard_error=(
+                    round(components["standard_error"], 4)
+                    if components["standard_error"] is not None
+                    else None
+                ),
+                precision_penalty=round(components["precision_penalty"], 4),
                 velocity_raw=round(v_raw, 3),
                 velocity_norm=round(v_norm, 3),
                 posterior_score=round(components["posterior_score"], 4),
+                is_ood_design=graph_memory.is_ood_tier(tier),
             )
         )
 
@@ -545,15 +680,19 @@ def apply_audit_flags(scored: list[ScoredPaper]) -> list[ScoredPaper]:
 
 
 def show_anomaly_card(p: ScoredPaper) -> None:
+    ood_badge = "  [bold magenta][OOD design][/]" if p.is_ood_design else ""
+    prereg_badge = "  [bold green][Preregistered][/]" if p.telemetry.is_preregistered else ""
     body = (
-        f"[bold]PMID:[/] {p.metadata.pmid}\n"
+        f"[bold]PMID:[/] {p.metadata.pmid}{ood_badge}{prereg_badge}\n"
         f"[bold]Title:[/] {p.metadata.title}\n"
+        f"[bold]Link:[/] [link={p.metadata.url}]{p.metadata.url}[/link]\n"
         f"[bold]Study design:[/] {p.telemetry.study_design}    [bold]N:[/] {p.telemetry.sample_size}\n"
         f"[bold]Claim strength:[/] {p.telemetry.claim_hyperbole}/5 vs. "
         f"[bold]design-justified ceiling:[/] {p.rigor_baseline:.2f}/5\n"
         f"[bold]Discrepancy Index D:[/] {p.discrepancy_index:.2f}    "
         f"[bold]Current P(E):[/] {p.prior_credence:.2f}    "
         f"[bold]L(Absurdity):[/] {p.likelihood_penalty:.2f}    "
+        f"[bold]Precision penalty:[/] {p.precision_penalty:.2f}    "
         f"[bold]S_posterior:[/] {p.posterior_score:.3f}\n\n"
         f"[bold red]Trigger(s):[/]\n" + "\n".join(f"  • {r}" for r in p.audit_reasons)
     )
@@ -606,12 +745,30 @@ def run_hitl_review(
 
         elif choice == "2":
             new_prior = prompt_manual_prior()
-            components = score_one(new_prior, p.telemetry.claim_hyperbole, p.sample_power_weight, p.velocity_norm)
-            p.prior_credence = round(new_prior, 4)
+            # is_preregistered=False here deliberately: a manual clamp is the
+            # operator's final word on P(E), not a base value for the
+            # automatic preregistration bonus to stack on top of — what they
+            # type is exactly what S_posterior gets computed from.
+            components = score_one(
+                new_prior,
+                p.telemetry.claim_hyperbole,
+                p.sample_power_weight,
+                p.velocity_norm,
+                ci_lower=p.telemetry.ci_lower,
+                ci_upper=p.telemetry.ci_upper,
+                is_preregistered=False,
+            )
+            p.base_prior_credence = round(new_prior, 4)
+            p.preregistration_bonus = 0.0
+            p.prior_credence = round(components["effective_prior_credence"], 4)
             p.rigor_baseline = round(components["rigor_baseline"], 4)
             p.discrepancy_index = round(components["discrepancy_index"], 4)
             p.discrepancy_adjusted = round(components["discrepancy_adjusted"], 4)
             p.likelihood_penalty = round(components["likelihood_penalty"], 4)
+            p.standard_error = (
+                round(components["standard_error"], 4) if components["standard_error"] is not None else None
+            )
+            p.precision_penalty = round(components["precision_penalty"], 4)
             p.posterior_score = round(components["posterior_score"], 4)
             p.audit_status = "OVERRIDDEN"
             graph_memory.record_feedback(conn, tier=tier, action="override", manual_p=new_prior, pmid=p.metadata.pmid)
@@ -630,13 +787,15 @@ def run_hitl_review(
 
 ARBITER_PROMPT = """You are the lead architect of this epistemic filter. You have \
 ranked the following papers using a DETERMINISTIC Bayesian posterior update: \
-each paper's final score S_posterior = [P(E) * L(Absurdity)] * 0.75 + \
-[citation velocity, normalized] * 0.25, where P(E) is a prior credence set by \
-the paper's study-design tier, and L(Absurdity) is a likelihood penalty that \
-discounts P(E) when the paper's claim_hyperbole outruns what its design and \
-sample size can actually justify (an observational study with a small N \
-claiming a definitive "cure" gets a much larger penalty than the same claim \
-from a large, well-powered trial).
+each paper's final score S_posterior = [P(E) * L(Absurdity) * PrecisionPenalty] \
+* 0.75 + [citation velocity, normalized] * 0.25, where P(E) is a prior credence \
+set by the paper's study-design tier (plus a small +0.05 bonus if the trial was \
+preregistered), L(Absurdity) is a likelihood penalty that discounts P(E) when \
+the paper's claim_hyperbole outruns what its design and sample size can \
+actually justify, and PrecisionPenalty discounts credence further when a \
+reported 95% CI is wide relative to the estimate (an observational study with \
+a small N claiming a definitive "cure" gets a much larger penalty than the \
+same claim from a large, well-powered, preregistered trial with a tight CI).
 
 You did NOT choose these scores or this ranking. Your job now is only to \
 explain, in plain language, why each paper landed where it did, using its \
@@ -660,14 +819,19 @@ def build_paper_block(top: list[ScoredPaper]) -> str:
     for i, p in enumerate(top, start=1):
         lines.append(
             f"Rank {i} — PMID {p.metadata.pmid}: \"{p.metadata.title}\"\n"
-            f"  study_design={p.telemetry.study_design}, "
+            f"  study_design={p.telemetry.study_design}"
+            f"{' [OOD design]' if p.is_ood_design else ''}, "
             f"sample_size={p.telemetry.sample_size}, "
-            f"claim_hyperbole={p.telemetry.claim_hyperbole}/5\n"
-            f"  prior_credence(P(E))={p.prior_credence}, "
+            f"claim_hyperbole={p.telemetry.claim_hyperbole}/5, "
+            f"is_preregistered={p.telemetry.is_preregistered}\n"
+            f"  base_prior_credence={p.base_prior_credence}, "
+            f"preregistration_bonus={p.preregistration_bonus}, "
+            f"prior_credence(P(E))={p.prior_credence}, "
             f"discrepancy_index(D)={p.discrepancy_index}, "
             f"sample_power_weight(W_N)={p.sample_power_weight}, "
             f"likelihood_penalty(L)={p.likelihood_penalty}\n"
-            f"  velocity_norm={p.velocity_norm}, "
+            f"  standard_error={p.standard_error}, precision_penalty={p.precision_penalty}, "
+            f"velocity_norm={p.velocity_norm}, "
             f"posterior_score(S)={p.posterior_score}"
         )
     return "\n\n".join(lines)
@@ -757,13 +921,20 @@ def print_ranking_table(scored: list[ScoredPaper], quarantined: Optional[set[str
     table.add_column("D", justify="right")
     table.add_column("W_N", justify="right")
     table.add_column("L", justify="right")
+    table.add_column("Prec.", justify="right")
     table.add_column("V_norm", justify="right")
     table.add_column("S_post", justify="right", style="bold")
+    table.add_column("Flags")
     table.add_column("Audit")
 
     for i, p in enumerate(scored, start=1):
         style = _AUDIT_STYLE.get(p.audit_status, "")
         audit_label = p.audit_status + (" [quarantined]" if p.metadata.pmid in quarantined else "")
+        flags = []
+        if p.is_ood_design:
+            flags.append("[magenta]OOD[/]")
+        if p.telemetry.is_preregistered:
+            flags.append("[green]PREREG[/]")
         table.add_row(
             str(i),
             p.metadata.pmid,
@@ -774,8 +945,10 @@ def print_ranking_table(scored: list[ScoredPaper], quarantined: Optional[set[str
             f"{p.discrepancy_index:.2f}",
             f"{p.sample_power_weight:.2f}",
             f"{p.likelihood_penalty:.2f}",
+            f"{p.precision_penalty:.2f}",
             f"{p.velocity_norm:.2f}",
             f"{p.posterior_score:.3f}",
+            " ".join(flags),
             f"[{style}]{audit_label}[/]" if style else audit_label,
         )
     console.print(table)
@@ -786,10 +959,12 @@ def print_top3_defense(top: list[ScoredPaper], verdict: Optional[ArbiterVerdict]
     just_by_pmid = {j.pmid: j.justification for j in verdict.justifications} if verdict else {}
     for i, p in enumerate(top, start=1):
         console.print(f"\n[bold]#{i}. {p.metadata.title}[/]  (PMID {p.metadata.pmid}, {p.metadata.publication_year})")
+        console.print(f"   [link={p.metadata.url}]{p.metadata.url}[/link]")
         console.print(
             f"   S_posterior = {p.posterior_score}  |  design = {p.telemetry.study_design}  |  "
             f"N = {p.telemetry.sample_size}  |  hype = {p.telemetry.claim_hyperbole}/5  |  "
-            f"P(E) = {p.prior_credence}  |  L(Absurdity) = {p.likelihood_penalty}"
+            f"P(E) = {p.prior_credence}  |  L(Absurdity) = {p.likelihood_penalty}  |  "
+            f"Precision = {p.precision_penalty}"
         )
         text = just_by_pmid.get(p.metadata.pmid)
         if text:
@@ -850,8 +1025,6 @@ def main() -> None:
 
     # ---- Persistent knowledge graph / active-learning store ----
     conn = graph_memory.init_db(args.db)
-    current_priors = graph_memory.get_current_prior_means(conn)
-    log.info(f"[MEMORY] Loaded prior credences from [cyan]{args.db}[/]: " + ", ".join(f"{k}={v:.2f}" for k, v in current_priors.items()))
 
     # ---- Module 1 ----
     papers = fetch_pubmed(args.query, args.max_results)
@@ -887,10 +1060,30 @@ def main() -> None:
         )
         sys.exit(1)
 
+    # Register any out-of-distribution study designs this batch introduced
+    # (e.g. an LLM-reported "Mendelian Randomization") with an uninformative
+    # Jeffreys prior BEFORE loading current_priors, so this run's own novel
+    # designs are included in prior_lookup rather than only ones a previous
+    # run already registered.
+    ood_designs = set()
+    for _, tele in relevant:
+        tier = graph_memory.beta_tier_for(tele.study_design, tele.sample_size)
+        if graph_memory.is_ood_tier(tier):
+            ood_designs.add(tele.study_design)
+        graph_memory.get_prior_credence(conn, tele.study_design, tele.sample_size)
+    if ood_designs:
+        log.info(
+            f"[MEMORY] Out-of-distribution study design(s) registered with an uninformative "
+            f"Jeffreys prior Beta({graph_memory.JEFFREYS_ALPHA}, {graph_memory.JEFFREYS_BETA}): "
+            f"{sorted(ood_designs)}"
+        )
+    current_priors = graph_memory.get_current_prior_means(conn)
+    log.info(f"[MEMORY] Loaded prior credences from [cyan]{args.db}[/]: " + ", ".join(f"{k}={v:.2f}" for k, v in current_priors.items()))
+
     # ---- Module 3: Reasoning Step 2 — Bayesian posterior scoring (the judgment call) ----
     log.info(
         "[CALCULATING MATRIX] Computing posterior scores: "
-        r"\[P(E) x L(Absurdity)] x 0.75 + \[citation velocity] x 0.25 ..."
+        r"\[P(E) x L(Absurdity) x PrecisionPenalty] x 0.75 + \[citation velocity] x 0.25 ..."
     )
     scored = score_papers(relevant, prior_lookup=current_priors)
 
@@ -940,25 +1133,37 @@ def main() -> None:
             likelihood_penalty=p.likelihood_penalty,
             posterior_score=p.posterior_score,
             audit_status=p.audit_status,
+            url=p.metadata.url,
+            doi=p.metadata.doi,
         )
 
+    # Contradiction edges are tagged sentiment="REFUTING" unconditionally —
+    # a detected contradiction IS a refuting relationship by definition.
     contradiction_edges = graph_memory.detect_contradictions(
         [(p.metadata.pmid, p.metadata.title, p.metadata.abstract) for p in scored]
     )
     for src, dst, detail in contradiction_edges:
-        graph_memory.add_edge(conn, src, dst, edge_type="contradiction", detail=detail)
+        graph_memory.add_edge(conn, src, dst, edge_type="contradiction", detail=detail, sentiment="REFUTING")
     if contradiction_edges:
         log.info(f"[MEMORY] {len(contradiction_edges)} candidate contradiction edge(s) detected (keyword heuristic).")
 
     try:
+        texts = {p.metadata.pmid: (p.metadata.title, p.metadata.abstract) for p in scored}
         citation_edges = graph_memory.fetch_citation_edges_from_pubmed(
             [p.metadata.pmid for p in scored],
             email=os.environ["ENTREZ_EMAIL"],
             api_key=os.environ.get("ENTREZ_API_KEY"),
+            texts=texts,
         )
-        for src, dst in citation_edges:
-            graph_memory.add_edge(conn, src, dst, edge_type="citation")
-        log.info(f"[MEMORY] {len(citation_edges)} citation edge(s) found among this batch's papers.")
+        for src, dst, sentiment in citation_edges:
+            graph_memory.add_edge(conn, src, dst, edge_type="citation", sentiment=sentiment)
+        sentiment_counts = {}
+        for _, _, sentiment in citation_edges:
+            sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+        log.info(
+            f"[MEMORY] {len(citation_edges)} citation edge(s) found among this batch's papers "
+            f"({dict(sentiment_counts)})."
+        )
     except Exception as e:  # noqa: BLE001 — best-effort, never fail the run over this
         log.warning(f"[MEMORY] Citation-edge lookup failed (non-fatal): {e}")
 

@@ -1,54 +1,13 @@
 {
-  "generated_at": "2026-08-17T20:49:02.399126",
+  "generated_at": "2026-08-18T11:06:26.602883",
   "query": "Semaglutide AND (\"NASH\" OR \"MASH\") AND fibrosis",
   "model": "gemini-flash-lite-latest",
   "papers_fetched": 10,
-  "papers_relevant": 6,
-  "papers_dropped_irrelevant": 4,
+  "papers_relevant": 10,
+  "papers_dropped_irrelevant": 0,
   "papers_flagged_for_audit": 0,
   "papers_quarantined": [],
   "full_ranking": [
-    {
-      "metadata": {
-        "pmid": "40305708",
-        "title": "Phase 3 Trial of Semaglutide in Metabolic Dysfunction-Associated Steatohepatitis.",
-        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, is a candidate for the treatment of metabolic dysfunction-associated steatohepatitis (MASH). In this ongoing phase 3, multicenter, randomized, double-blind, placebo-controlled trial, we assigned 1197 patients with biopsy-defined MASH and fibrosis stage 2 or 3 in a 2:1 ratio to receive once-weekly subcutaneous semaglutide at a dose of 2.4 mg or placebo for 240 weeks. The results of a planned interim analysis conducted at week 72 involving the first 800 patients are reported here (part 1). The primary end points for part 1 were the resolution of steatohepatitis without worsening of liver fibrosis and reduction in liver fibrosis without worsening of steatohepatitis. Resolution of steatohepatitis without worsening of fibrosis occurred in 62.9% of the 534 patients in the semaglutide group and in 34.3% of the 266 patients in the placebo group (estimated difference, 28.7 percentage points; 95% confidence interval [CI], 21.1 to 36.2; P<0.001). A reduction in liver fibrosis without worsening of steatohepatitis was reported in 36.8% of the patients in the semaglutide group and in 22.4% of those in the placebo group (estimated difference, 14.4 percentage points; 95% CI, 7.5 to 21.3; P<0.001). Results for the three secondary outcomes that were included in the plan to adjust for multiple testing were as follows: combined resolution of steatohepatitis and reduction in liver fibrosis was reported in 32.7% of the patients in the semaglutide group and in 16.1% of those in the placebo group (estimated difference, 16.5 percentage points; 95% CI, 10.2 to 22.8; P<0.001). The mean change in body weight was -10.5% with semaglutide and -2.0% with placebo (estimated difference, -8.5 percentage points; 95% CI, -9.6 to -7.4; P<0.001). Mean changes in bodily pain scores did not differ significantly between the two groups. Gastrointestinal adverse events were more common in the semaglutide group. In patients with MASH and moderate or advanced liver fibrosis, once-weekly semaglutide at a dose of 2.4 mg improved liver histologic results. (Funded by Novo Nordisk; ClinicalTrials.gov number, NCT04822181.).",
-        "authors": [
-          "Arun J Sanyal",
-          "Philip N Newsome",
-          "Iris Kliers",
-          "Laura Harms \u00d8stergaard",
-          "Michelle T Long",
-          "Mette Skalsh\u00f8i Kj\u00e6r",
-          "Anna M G Cali",
-          "Elisabetta Bugianesi",
-          "Mary E Rinella",
-          "Michael Roden",
-          "Vlad Ratziu",
-          "ESSENCE Study Group"
-        ],
-        "publication_year": 2025,
-        "citations": 189,
-        "citations_mocked": true
-      },
-      "telemetry": {
-        "is_relevant": true,
-        "study_design": "RCT",
-        "sample_size": 800,
-        "claim_hyperbole": 1
-      },
-      "prior_credence": 0.9,
-      "rigor_baseline": 4.5,
-      "discrepancy_index": 0.0,
-      "sample_power_weight": 0.7315,
-      "discrepancy_adjusted": 0.0,
-      "likelihood_penalty": 1.0,
-      "velocity_raw": 94.5,
-      "velocity_norm": 1.0,
-      "posterior_score": 0.925,
-      "audit_status": "PASSED",
-      "audit_reasons": []
-    },
     {
       "metadata": {
         "pmid": "40736113",
@@ -66,57 +25,34 @@
         ],
         "publication_year": 2025,
         "citations": 57,
-        "citations_mocked": true
+        "citations_mocked": true,
+        "doi": "10.1111/liv.70256",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/40736113/"
       },
       "telemetry": {
         "is_relevant": true,
         "study_design": "Meta-Analysis",
         "sample_size": 1811,
-        "claim_hyperbole": 2
+        "claim_hyperbole": 2,
+        "ci_lower": 2.69,
+        "ci_upper": 4.51,
+        "p_value": null,
+        "is_preregistered": false
       },
+      "base_prior_credence": 0.95,
+      "preregistration_bonus": 0.0,
       "prior_credence": 0.95,
       "rigor_baseline": 4.75,
       "discrepancy_index": 0.0,
       "sample_power_weight": 0.8208,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
+      "standard_error": 0.4643,
+      "precision_penalty": 1.0,
       "velocity_raw": 28.5,
-      "velocity_norm": 0.261,
-      "posterior_score": 0.7777,
-      "audit_status": "PASSED",
-      "audit_reasons": []
-    },
-    {
-      "metadata": {
-        "pmid": "39903735",
-        "title": "Comparison of pharmacological therapies in metabolic dysfunction-associated steatohepatitis for fibrosis regression and MASH resolution: Systematic review and network meta-analysis.",
-        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a leading cause of liver disease. With the advent of multiple therapeutic targets in late-phase clinical drug development for MASH, there is a knowledge gap to better understand the comparative efficacy of various pharmacological agents. We conducted an updated network meta-analysis to evaluate the relative rank order of the different pharmacological agents for both fibrosis regression and MASH resolution. We searched PubMed and Embase databases from January 1, 2020 to December 1, 2024, for published randomized controlled trials comparing pharmacological interventions in patients with biopsy-proven MASH. The co-primary endpoints were fibrosis improvement \u22651 stage without MASH worsening and MASH resolution without worsening fibrosis. We conducted surface under the cumulative ranking curve (SUCRA) analysis. A total of 29 randomized controlled trials (n=9324) were included. Pegozafermin, cilofexor + firsocostat, denifanstat, survodutide, obeticholic acid, tirzepatide, resmetirom, and semaglutide were significantly better than placebo in achieving fibrosis regression without worsening MASH. Pegozafermin (SUCRA: 79.92), cilofexor + firsocostat (SUCRA: 71.38), and cilofexor + selonsertib (SUCRA: 69.11) were ranked the most effective interventions. Pegozafermin, survodutide, tirzepatide, efruxifermin, liraglutide, vitamin E + pioglitazone, resmetirom, semaglutide, pioglitazone, denifanstat, semaglutide, and lanifibranor were significantly better than placebo in achieving MASH resolution without worsening fibrosis. Pegozafermin (SUCRA: 91.75), survodutide (SUCRA: 90.87), and tirzepatide (SUCRA: 84.70) were ranked the most effective interventions for achieving MASH resolution without worsening fibrosis. This study provides updated rank-order efficacy of MASH pharmacological therapies for fibrosis regression and MASH resolution. These data are helpful to inform practice and clinical trial design.",
-        "authors": [
-          "Matheus Souza",
-          "Lubna Al-Sharif",
-          "Vanio L J Antunes",
-          "Daniel Q Huang",
-          "Rohit Loomba"
-        ],
-        "publication_year": 2025,
-        "citations": 28,
-        "citations_mocked": true
-      },
-      "telemetry": {
-        "is_relevant": true,
-        "study_design": "Meta-Analysis",
-        "sample_size": 9324,
-        "claim_hyperbole": 2
-      },
-      "prior_credence": 0.95,
-      "rigor_baseline": 4.75,
-      "discrepancy_index": 0.0,
-      "sample_power_weight": 1.0,
-      "discrepancy_adjusted": 0.0,
-      "likelihood_penalty": 1.0,
-      "velocity_raw": 14.0,
-      "velocity_norm": 0.099,
-      "posterior_score": 0.7371,
+      "velocity_norm": 0.127,
+      "posterior_score": 0.7444,
+      "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": []
     },
@@ -139,23 +75,79 @@
         ],
         "publication_year": 2024,
         "citations": 62,
-        "citations_mocked": true
+        "citations_mocked": true,
+        "doi": "10.1111/apt.18331",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/39412509/"
       },
       "telemetry": {
         "is_relevant": true,
         "study_design": "RCT",
         "sample_size": 800,
-        "claim_hyperbole": 1
+        "claim_hyperbole": 1,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": true
       },
-      "prior_credence": 0.9,
-      "rigor_baseline": 4.5,
+      "base_prior_credence": 0.9,
+      "preregistration_bonus": 0.05,
+      "prior_credence": 0.95,
+      "rigor_baseline": 4.75,
       "discrepancy_index": 0.0,
       "sample_power_weight": 0.7315,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
       "velocity_raw": 20.667,
-      "velocity_norm": 0.173,
-      "posterior_score": 0.7183,
+      "velocity_norm": 0.085,
+      "posterior_score": 0.7337,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "39903735",
+        "title": "Comparison of pharmacological therapies in metabolic dysfunction-associated steatohepatitis for fibrosis regression and MASH resolution: Systematic review and network meta-analysis.",
+        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a leading cause of liver disease. With the advent of multiple therapeutic targets in late-phase clinical drug development for MASH, there is a knowledge gap to better understand the comparative efficacy of various pharmacological agents. We conducted an updated network meta-analysis to evaluate the relative rank order of the different pharmacological agents for both fibrosis regression and MASH resolution. We searched PubMed and Embase databases from January 1, 2020 to December 1, 2024, for published randomized controlled trials comparing pharmacological interventions in patients with biopsy-proven MASH. The co-primary endpoints were fibrosis improvement \u22651 stage without MASH worsening and MASH resolution without worsening fibrosis. We conducted surface under the cumulative ranking curve (SUCRA) analysis. A total of 29 randomized controlled trials (n=9324) were included. Pegozafermin, cilofexor + firsocostat, denifanstat, survodutide, obeticholic acid, tirzepatide, resmetirom, and semaglutide were significantly better than placebo in achieving fibrosis regression without worsening MASH. Pegozafermin (SUCRA: 79.92), cilofexor + firsocostat (SUCRA: 71.38), and cilofexor + selonsertib (SUCRA: 69.11) were ranked the most effective interventions. Pegozafermin, survodutide, tirzepatide, efruxifermin, liraglutide, vitamin E + pioglitazone, resmetirom, semaglutide, pioglitazone, denifanstat, semaglutide, and lanifibranor were significantly better than placebo in achieving MASH resolution without worsening fibrosis. Pegozafermin (SUCRA: 91.75), survodutide (SUCRA: 90.87), and tirzepatide (SUCRA: 84.70) were ranked the most effective interventions for achieving MASH resolution without worsening fibrosis. This study provides updated rank-order efficacy of MASH pharmacological therapies for fibrosis regression and MASH resolution. These data are helpful to inform practice and clinical trial design.",
+        "authors": [
+          "Matheus Souza",
+          "Lubna Al-Sharif",
+          "Vanio L J Antunes",
+          "Daniel Q Huang",
+          "Rohit Loomba"
+        ],
+        "publication_year": 2025,
+        "citations": 28,
+        "citations_mocked": true,
+        "doi": "10.1097/HEP.0000000000001254",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/39903735/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Meta-Analysis",
+        "sample_size": 9324,
+        "claim_hyperbole": 2,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
+      },
+      "base_prior_credence": 0.95,
+      "preregistration_bonus": 0.0,
+      "prior_credence": 0.95,
+      "rigor_baseline": 4.75,
+      "discrepancy_index": 0.0,
+      "sample_power_weight": 1.0,
+      "discrepancy_adjusted": 0.0,
+      "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 14.0,
+      "velocity_norm": 0.048,
+      "posterior_score": 0.7245,
+      "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": []
     },
@@ -178,23 +170,258 @@
         ],
         "publication_year": 2021,
         "citations": 35,
-        "citations_mocked": true
+        "citations_mocked": true,
+        "doi": "10.1056/NEJMoa2028395",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/33185364/"
       },
       "telemetry": {
         "is_relevant": true,
         "study_design": "RCT",
         "sample_size": 320,
-        "claim_hyperbole": 2
+        "claim_hyperbole": 1,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": 0.001,
+        "is_preregistered": true
       },
-      "prior_credence": 0.9,
-      "rigor_baseline": 4.5,
+      "base_prior_credence": 0.9,
+      "preregistration_bonus": 0.05,
+      "prior_credence": 0.95,
+      "rigor_baseline": 4.75,
       "discrepancy_index": 0.0,
       "sample_power_weight": 0.6314,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
       "velocity_raw": 5.833,
-      "velocity_norm": 0.007,
-      "posterior_score": 0.6768,
+      "velocity_norm": 0.003,
+      "posterior_score": 0.7134,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "41015698",
+        "title": "Mechanisms and therapeutic insights into MASH-associated fibrosis.",
+        "abstract": "Metabolic dysfunction-associated steatohepatitis (MASH) is a progressive liver disease posing a major global health concern, closely related to the rising prevalence of obesity. Liver fibrosis is the primary determinant of adverse outcomes in MASH. The increasing worldwide prevalence, economic impact, and adverse outcomes of MASH-associated fibrosis have spurred extensive research to elucidate its pathogenesis and to address its treatment. However, the intricate mechanism driving the transition from metabolic dysfunction to clinically significant fibrosis is not fully understood. Moreover, effective therapies, particularly direct antifibrotic agents, are still lacking, despite the recent approval of resmetirom and semaglutide for MASH-associated fibrosis. Here, we review current insights into the mechanism of MASH-associated fibrosis and provide a comprehensive overview of emerging therapeutic strategies.",
+        "authors": [
+          "Yiwei Zhu",
+          "Bishuang Cai"
+        ],
+        "publication_year": 2026,
+        "citations": 188,
+        "citations_mocked": true,
+        "doi": "10.1016/j.tem.2025.09.004",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/41015698/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Review/Opinion",
+        "sample_size": 0,
+        "claim_hyperbole": 2,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
+      },
+      "base_prior_credence": 0.15,
+      "preregistration_bonus": 0.0,
+      "prior_credence": 0.15,
+      "rigor_baseline": 0.75,
+      "discrepancy_index": 1.25,
+      "sample_power_weight": 0.0,
+      "discrepancy_adjusted": 2.5,
+      "likelihood_penalty": 0.3679,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 188.0,
+      "velocity_norm": 1.0,
+      "posterior_score": 0.2914,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "40305708",
+        "title": "Phase 3 Trial of Semaglutide in Metabolic Dysfunction-Associated Steatohepatitis.",
+        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, is a candidate for the treatment of metabolic dysfunction-associated steatohepatitis (MASH). In this ongoing phase 3, multicenter, randomized, double-blind, placebo-controlled trial, we assigned 1197 patients with biopsy-defined MASH and fibrosis stage 2 or 3 in a 2:1 ratio to receive once-weekly subcutaneous semaglutide at a dose of 2.4 mg or placebo for 240 weeks. The results of a planned interim analysis conducted at week 72 involving the first 800 patients are reported here (part 1). The primary end points for part 1 were the resolution of steatohepatitis without worsening of liver fibrosis and reduction in liver fibrosis without worsening of steatohepatitis. Resolution of steatohepatitis without worsening of fibrosis occurred in 62.9% of the 534 patients in the semaglutide group and in 34.3% of the 266 patients in the placebo group (estimated difference, 28.7 percentage points; 95% confidence interval [CI], 21.1 to 36.2; P<0.001). A reduction in liver fibrosis without worsening of steatohepatitis was reported in 36.8% of the patients in the semaglutide group and in 22.4% of those in the placebo group (estimated difference, 14.4 percentage points; 95% CI, 7.5 to 21.3; P<0.001). Results for the three secondary outcomes that were included in the plan to adjust for multiple testing were as follows: combined resolution of steatohepatitis and reduction in liver fibrosis was reported in 32.7% of the patients in the semaglutide group and in 16.1% of those in the placebo group (estimated difference, 16.5 percentage points; 95% CI, 10.2 to 22.8; P<0.001). The mean change in body weight was -10.5% with semaglutide and -2.0% with placebo (estimated difference, -8.5 percentage points; 95% CI, -9.6 to -7.4; P<0.001). Mean changes in bodily pain scores did not differ significantly between the two groups. Gastrointestinal adverse events were more common in the semaglutide group. In patients with MASH and moderate or advanced liver fibrosis, once-weekly semaglutide at a dose of 2.4 mg improved liver histologic results. (Funded by Novo Nordisk; ClinicalTrials.gov number, NCT04822181.).",
+        "authors": [
+          "Arun J Sanyal",
+          "Philip N Newsome",
+          "Iris Kliers",
+          "Laura Harms \u00d8stergaard",
+          "Michelle T Long",
+          "Mette Skalsh\u00f8i Kj\u00e6r",
+          "Anna M G Cali",
+          "Elisabetta Bugianesi",
+          "Mary E Rinella",
+          "Michael Roden",
+          "Vlad Ratziu",
+          "ESSENCE Study Group"
+        ],
+        "publication_year": 2025,
+        "citations": 189,
+        "citations_mocked": true,
+        "doi": "10.1056/NEJMoa2413258",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/40305708/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "RCT",
+        "sample_size": 800,
+        "claim_hyperbole": 2,
+        "ci_lower": 21.1,
+        "ci_upper": 36.2,
+        "p_value": 0.001,
+        "is_preregistered": true
+      },
+      "base_prior_credence": 0.9,
+      "preregistration_bonus": 0.05,
+      "prior_credence": 0.95,
+      "rigor_baseline": 4.75,
+      "discrepancy_index": 0.0,
+      "sample_power_weight": 0.7315,
+      "discrepancy_adjusted": 0.0,
+      "likelihood_penalty": 1.0,
+      "standard_error": 3.852,
+      "precision_penalty": 0.1871,
+      "velocity_raw": 94.5,
+      "velocity_norm": 0.489,
+      "posterior_score": 0.2554,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "41212550",
+        "title": "Metabolic Dysfunction-Associated Steatotic Liver Disease in Adults: A Review.",
+        "abstract": "Metabolic dysfunction-associated steatotic liver disease (MASLD) includes a range of liver conditions, progressing from isolated steatosis (characterized by fat accumulation in the liver without inflammation) to metabolic dysfunction-associated steatohepatitis (MASH), which involves fat accumulation and inflammation in the liver. The presence of MASLD is associated with increased morbidity and mortality due to liver-related complications, hepatocellular carcinoma, cardiovascular disease, and certain extrahepatic cancers. The most common chronic liver disease worldwide, MASLD affects approximately 30% to 40% of the general adult population globally (with varying prevalence across continents), including approximately 60% to 70% of individuals with type 2 diabetes and approximately 70% to 80% of those with obesity. It is typically diagnosed based on an ultrasonographic finding of hepatic steatosis, along with at least 1 of 5 features of the metabolic syndrome (abdominal overweight or obesity, prediabetes or type 2 diabetes, hypertension, elevated level of plasma triglycerides, and low level of high-density lipoprotein cholesterol) for women who consume less than 140 g/wk of alcohol (<2 standard drinks/d) and for men who consume less than 210 g/wk (<3 standard drinks/d) and have no other known causes of steatosis such as use of a particular medication (eg, corticosteroids, tamoxifen, or methotrexate), hepatitis C, or iron overload. Other risk factors for MASLD include older age (\u226550 years) and male sex (male:female ratio approximately 2). The Fibrosis-4 index (a scoring system incorporating age, serum levels of aspartate aminotransferase and alanine aminotransferase, and platelet count) and vibration-controlled transient elastography (a noninvasive imaging technique) are commonly used to stage hepatic fibrosis in patients with MASLD. Cardiovascular disease is the leading cause of death, followed by certain extrahepatic cancers (primarily gastrointestinal, breast, and gynecologic cancer) and liver-related complications, including cirrhosis, hepatic decompensation (ascites, hepatic encephalopathy, or variceal bleeding), and hepatocellular carcinoma. First-line treatment of MASLD involves behavioral modifications (including hypocaloric low-carbohydrate and low-fat diets, physical exercise, and avoidance of alcohol) and management of type 2 diabetes, obesity, hypertension, and hyperlipidemia. Bariatric surgery should be considered for patients with MASLD and a body mass index greater than 35. Resmetirom (a liver-directed, thyroid hormone receptor \u03b2-selective agonist) and subcutaneous semaglutide (a glucagon-like peptide-1 receptor agonist) are conditionally approved by the US Food and Drug Administration (FDA) for the treatment of adults with MASH who have moderate to advanced fibrosis. A highly prevalent condition among adults worldwide, MASLD is associated with liver-related complications, hepatocellular carcinoma, cardiovascular disease, and certain extrahepatic cancers. First-line treatment includes behavioral modifications, including a weight-reducing diet, physical exercise, and avoidance of alcohol. Resmetirom and semaglutide are conditionally FDA-approved medications for the treatment of adults with MASH and moderate to advanced fibrosis.",
+        "authors": [
+          "Herbert Tilg",
+          "Salvatore Petta",
+          "Norbert Stefan",
+          "Giovanni Targher"
+        ],
+        "publication_year": 2026,
+        "citations": 6,
+        "citations_mocked": true,
+        "doi": "10.1001/jama.2025.19615",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/41212550/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Review/Opinion",
+        "sample_size": 0,
+        "claim_hyperbole": 1,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
+      },
+      "base_prior_credence": 0.15,
+      "preregistration_bonus": 0.0,
+      "prior_credence": 0.15,
+      "rigor_baseline": 0.75,
+      "discrepancy_index": 0.25,
+      "sample_power_weight": 0.0,
+      "discrepancy_adjusted": 0.5,
+      "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 6.0,
+      "velocity_norm": 0.004,
+      "posterior_score": 0.1136,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "38851997",
+        "title": "EASL-EASD-EASO Clinical Practice Guidelines on the management of metabolic dysfunction-associated steatotic liver disease (MASLD).",
+        "abstract": "Metabolic dysfunction-associated steatotic liver disease (MASLD), previously termed non-alcoholic fatty liver disease (NAFLD), is defined as steatotic liver disease (SLD) in the presence of one or more cardiometabolic risk factor(s) and the absence of harmful alcohol intake. The spectrum of MASLD includes steatosis, metabolic dysfunction-associated steatohepatitis (MASH, previously NASH), fibrosis, cirrhosis and MASH-related hepatocellular carcinoma (HCC). This joint EASL-EASD-EASO guideline provides an update on definitions, prevention, screening, diagnosis and treatment for MASLD. Case-finding strategies for MASLD with liver fibrosis, using non-invasive tests, should be applied in individuals with cardiometabolic risk factors, abnormal liver enzymes, and/or radiological signs of hepatic steatosis, particularly in the presence of type 2 diabetes (T2D) or obesity with additional metabolic risk factor(s). A stepwise approach using blood-based scores (such as FIB-4) and, sequentially, imaging techniques (such as transient elastography) is suitable to rule-out/in advanced fibrosis, which is predictive of liver-related outcomes. In adults with MASLD, lifestyle modification - including weight loss, dietary changes, physical exercise and discouraging alcohol consumption - as well as optimal management of comorbidities - including use of incretin-based therapies (e.g. semaglutide, tirzepatide) for T2D or obesity, if indicated - is advised. Bariatric surgery is also an option in individuals with MASLD and obesity. If locally approved and dependent on the label, adults with non-cirrhotic MASH and significant liver fibrosis (stage \u22652) should be considered for a MASH-targeted treatment with resmetirom, which demonstrated histological effectiveness on steatohepatitis and fibrosis with an acceptable safety and tolerability profile. No MASH-targeted pharmacotherapy can currently be recommended for the cirrhotic stage. Management of MASH-related cirrhosis includes adaptations of metabolic drugs, nutritional counselling, surveillance for portal hypertension and HCC, as well as liver transplantation in decompensated cirrhosis.",
+        "authors": [
+          "European Association for the Study of the Liver (EASL)",
+          "European Association for the Study of Diabetes (EASD)",
+          "European Association for the Study of Obesity (EASO)"
+        ],
+        "publication_year": 2024,
+        "citations": 163,
+        "citations_mocked": true,
+        "doi": "10.1016/j.jhep.2024.04.031",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/38851997/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Review/Opinion",
+        "sample_size": 0,
+        "claim_hyperbole": 2,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
+      },
+      "base_prior_credence": 0.15,
+      "preregistration_bonus": 0.0,
+      "prior_credence": 0.15,
+      "rigor_baseline": 0.75,
+      "discrepancy_index": 1.25,
+      "sample_power_weight": 0.0,
+      "discrepancy_adjusted": 2.5,
+      "likelihood_penalty": 0.3679,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 54.333,
+      "velocity_norm": 0.269,
+      "posterior_score": 0.1086,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "39609545",
+        "title": "Therapeutic landscape of metabolic dysfunction-associated steatohepatitis (MASH).",
+        "abstract": "Metabolic dysfunction-associated steatotic liver disease (MASLD)\u00a0and its severe subgroup metabolic dysfunction-associated steatohepatitis (MASH) have become a global epidemic and are driven by chronic overnutrition and multiple genetic susceptibility factors. The physiological outcomes include hepatocyte death, liver inflammation and cirrhosis. The first therapeutic for MASLD and MASH, resmetirom, has recently been approved for clinical use and has energized this therapeutic space. However, there is still much to learn in clinical studies of MASH, such as the scale of placebo responses, optimal trial end points, the time required for fibrosis reversal and side effect profiles. This Review introduces aspects of disease pathogenesis related to drug development and discusses two main therapeutic approaches. Thyroid hormone receptor-\u03b2 agonists, such as resmetirom, as well as fatty acid synthase inhibitors, target the liver and enable it to function within a toxic metabolic environment. In parallel, incretin analogues such as semaglutide improve metabolism, allowing the liver to self-regulate and reversing many aspects of MASH. We also discuss how combinations of therapeutics could potentially be used to treat patients.",
+        "authors": [
+          "Albert Do",
+          "Frhaan Zahrawi",
+          "Wajahat Z Mehal"
+        ],
+        "publication_year": 2025,
+        "citations": 70,
+        "citations_mocked": true,
+        "doi": "10.1038/s41573-024-01084-2",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/39609545/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "Review/Opinion",
+        "sample_size": 0,
+        "claim_hyperbole": 2,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
+      },
+      "base_prior_credence": 0.15,
+      "preregistration_bonus": 0.0,
+      "prior_credence": 0.15,
+      "rigor_baseline": 0.75,
+      "discrepancy_index": 1.25,
+      "sample_power_weight": 0.0,
+      "discrepancy_adjusted": 2.5,
+      "likelihood_penalty": 0.3679,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 35.0,
+      "velocity_norm": 0.163,
+      "posterior_score": 0.0821,
+      "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": []
     },
@@ -222,69 +449,39 @@
         ],
         "publication_year": 2022,
         "citations": 26,
-        "citations_mocked": true
+        "citations_mocked": true,
+        "doi": "10.1111/cts.13235",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/35143711/"
       },
       "telemetry": {
         "is_relevant": true,
         "study_design": "In-Vitro/Animal",
         "sample_size": 0,
-        "claim_hyperbole": 2
+        "claim_hyperbole": 2,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
       },
+      "base_prior_credence": 0.15,
+      "preregistration_bonus": 0.0,
       "prior_credence": 0.15,
       "rigor_baseline": 0.75,
       "discrepancy_index": 1.25,
       "sample_power_weight": 0.0,
       "discrepancy_adjusted": 2.5,
       "likelihood_penalty": 0.3679,
+      "standard_error": null,
+      "precision_penalty": 1.0,
       "velocity_raw": 5.2,
       "velocity_norm": 0.0,
       "posterior_score": 0.0414,
+      "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": []
     }
   ],
   "top3": [
-    {
-      "metadata": {
-        "pmid": "40305708",
-        "title": "Phase 3 Trial of Semaglutide in Metabolic Dysfunction-Associated Steatohepatitis.",
-        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, is a candidate for the treatment of metabolic dysfunction-associated steatohepatitis (MASH). In this ongoing phase 3, multicenter, randomized, double-blind, placebo-controlled trial, we assigned 1197 patients with biopsy-defined MASH and fibrosis stage 2 or 3 in a 2:1 ratio to receive once-weekly subcutaneous semaglutide at a dose of 2.4 mg or placebo for 240 weeks. The results of a planned interim analysis conducted at week 72 involving the first 800 patients are reported here (part 1). The primary end points for part 1 were the resolution of steatohepatitis without worsening of liver fibrosis and reduction in liver fibrosis without worsening of steatohepatitis. Resolution of steatohepatitis without worsening of fibrosis occurred in 62.9% of the 534 patients in the semaglutide group and in 34.3% of the 266 patients in the placebo group (estimated difference, 28.7 percentage points; 95% confidence interval [CI], 21.1 to 36.2; P<0.001). A reduction in liver fibrosis without worsening of steatohepatitis was reported in 36.8% of the patients in the semaglutide group and in 22.4% of those in the placebo group (estimated difference, 14.4 percentage points; 95% CI, 7.5 to 21.3; P<0.001). Results for the three secondary outcomes that were included in the plan to adjust for multiple testing were as follows: combined resolution of steatohepatitis and reduction in liver fibrosis was reported in 32.7% of the patients in the semaglutide group and in 16.1% of those in the placebo group (estimated difference, 16.5 percentage points; 95% CI, 10.2 to 22.8; P<0.001). The mean change in body weight was -10.5% with semaglutide and -2.0% with placebo (estimated difference, -8.5 percentage points; 95% CI, -9.6 to -7.4; P<0.001). Mean changes in bodily pain scores did not differ significantly between the two groups. Gastrointestinal adverse events were more common in the semaglutide group. In patients with MASH and moderate or advanced liver fibrosis, once-weekly semaglutide at a dose of 2.4 mg improved liver histologic results. (Funded by Novo Nordisk; ClinicalTrials.gov number, NCT04822181.).",
-        "authors": [
-          "Arun J Sanyal",
-          "Philip N Newsome",
-          "Iris Kliers",
-          "Laura Harms \u00d8stergaard",
-          "Michelle T Long",
-          "Mette Skalsh\u00f8i Kj\u00e6r",
-          "Anna M G Cali",
-          "Elisabetta Bugianesi",
-          "Mary E Rinella",
-          "Michael Roden",
-          "Vlad Ratziu",
-          "ESSENCE Study Group"
-        ],
-        "publication_year": 2025,
-        "citations": 189,
-        "citations_mocked": true
-      },
-      "telemetry": {
-        "is_relevant": true,
-        "study_design": "RCT",
-        "sample_size": 800,
-        "claim_hyperbole": 1
-      },
-      "prior_credence": 0.9,
-      "rigor_baseline": 4.5,
-      "discrepancy_index": 0.0,
-      "sample_power_weight": 0.7315,
-      "discrepancy_adjusted": 0.0,
-      "likelihood_penalty": 1.0,
-      "velocity_raw": 94.5,
-      "velocity_norm": 1.0,
-      "posterior_score": 0.925,
-      "audit_status": "PASSED",
-      "audit_reasons": []
-    },
     {
       "metadata": {
         "pmid": "40736113",
@@ -302,23 +499,84 @@
         ],
         "publication_year": 2025,
         "citations": 57,
-        "citations_mocked": true
+        "citations_mocked": true,
+        "doi": "10.1111/liv.70256",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/40736113/"
       },
       "telemetry": {
         "is_relevant": true,
         "study_design": "Meta-Analysis",
         "sample_size": 1811,
-        "claim_hyperbole": 2
+        "claim_hyperbole": 2,
+        "ci_lower": 2.69,
+        "ci_upper": 4.51,
+        "p_value": null,
+        "is_preregistered": false
       },
+      "base_prior_credence": 0.95,
+      "preregistration_bonus": 0.0,
       "prior_credence": 0.95,
       "rigor_baseline": 4.75,
       "discrepancy_index": 0.0,
       "sample_power_weight": 0.8208,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
+      "standard_error": 0.4643,
+      "precision_penalty": 1.0,
       "velocity_raw": 28.5,
-      "velocity_norm": 0.261,
-      "posterior_score": 0.7777,
+      "velocity_norm": 0.127,
+      "posterior_score": 0.7444,
+      "is_ood_design": false,
+      "audit_status": "PASSED",
+      "audit_reasons": []
+    },
+    {
+      "metadata": {
+        "pmid": "39412509",
+        "title": "Semaglutide 2.4\u2009mg in Participants With Metabolic Dysfunction-Associated Steatohepatitis: Baseline Characteristics and Design of the Phase 3 ESSENCE Trial.",
+        "abstract": "Semaglutide, a glucagon-like peptide-1 receptor agonist, has demonstrated potential beneficial effects in metabolic dysfunction-associated steatohepatitis (MASH). To describe the trial design and baseline characteristics of the 'Effect of Semaglutide in Subjects with Non-cirrhotic Non-alcoholic Steatohepatitis' (ESSENCE) trial (NCT04822181). ESSENCE is a two-part, phase 3, randomised, multicentre trial evaluating the effect of subcutaneous semaglutide 2.4\u2009mg in participants with biopsy-proven MASH and fibrosis stage 2 or 3. The primary objective of Part 1 is to demonstrate that semaglutide improves liver histology compared with placebo. The two primary endpoints are: resolution of steatohepatitis and no worsening of liver fibrosis, and improvement in liver fibrosis and no worsening of steatohepatitis. The Part 2 objective is based on clinical outcomes. The current work reports baseline characteristics of the first 800 randomised participants which includes demographics, laboratory parameters, liver histology, non-invasive tests and presence of metabolic dysfunction-associated steatotic liver disease (MASLD) cardiometabolic criteria. Of 800 participants, 250 (31.3%) had fibrosis stage 2 and 550 (68.8%) had fibrosis stage 3. In the overall population, mean (standard deviation [SD]) age was 56 (11.6) years, 57.1% were female, mean (SD) body mass index was 34.6 (7.2) kg/m<sup>2</sup>, 55.5% had type 2 diabetes and >\u200999% had at least one MASLD cardiometabolic criterion according to the published definition. The ESSENCE baseline population includes participants with clinically significant fibrosis stages 2 and 3. Although MASLD cardiometabolic criteria were not a requirement for study enrolment, almost all participants (>\u200999%) had at least one MASLD cardiometabolic criterion. NCT04822181.",
+        "authors": [
+          "Philip N Newsome",
+          "Arun J Sanyal",
+          "Kristiane A Engebretsen",
+          "Iris Kliers",
+          "Laura \u00d8stergaard",
+          "Denise Vanni",
+          "Elisabetta Bugianesi",
+          "Mary E Rinella",
+          "Michael Roden",
+          "Vlad Ratziu"
+        ],
+        "publication_year": 2024,
+        "citations": 62,
+        "citations_mocked": true,
+        "doi": "10.1111/apt.18331",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/39412509/"
+      },
+      "telemetry": {
+        "is_relevant": true,
+        "study_design": "RCT",
+        "sample_size": 800,
+        "claim_hyperbole": 1,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": true
+      },
+      "base_prior_credence": 0.9,
+      "preregistration_bonus": 0.05,
+      "prior_credence": 0.95,
+      "rigor_baseline": 4.75,
+      "discrepancy_index": 0.0,
+      "sample_power_weight": 0.7315,
+      "discrepancy_adjusted": 0.0,
+      "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
+      "velocity_raw": 20.667,
+      "velocity_norm": 0.085,
+      "posterior_score": 0.7337,
+      "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": []
     },
@@ -336,23 +594,34 @@
         ],
         "publication_year": 2025,
         "citations": 28,
-        "citations_mocked": true
+        "citations_mocked": true,
+        "doi": "10.1097/HEP.0000000000001254",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/39903735/"
       },
       "telemetry": {
         "is_relevant": true,
         "study_design": "Meta-Analysis",
         "sample_size": 9324,
-        "claim_hyperbole": 2
+        "claim_hyperbole": 2,
+        "ci_lower": null,
+        "ci_upper": null,
+        "p_value": null,
+        "is_preregistered": false
       },
+      "base_prior_credence": 0.95,
+      "preregistration_bonus": 0.0,
       "prior_credence": 0.95,
       "rigor_baseline": 4.75,
       "discrepancy_index": 0.0,
       "sample_power_weight": 1.0,
       "discrepancy_adjusted": 0.0,
       "likelihood_penalty": 1.0,
+      "standard_error": null,
+      "precision_penalty": 1.0,
       "velocity_raw": 14.0,
-      "velocity_norm": 0.099,
-      "posterior_score": 0.7371,
+      "velocity_norm": 0.048,
+      "posterior_score": 0.7245,
+      "is_ood_design": false,
       "audit_status": "PASSED",
       "audit_reasons": []
     }
@@ -360,21 +629,21 @@
   "arbiter_verdict": {
     "justifications": [
       {
-        "pmid": "40305708",
+        "pmid": "40736113",
         "rank": 1,
-        "justification": "This paper secured the top rank primarily due to a maximal citation velocity score of 1.0, which heavily boosted its posterior score despite having a robust study_design of RCT and a sample_size of 800. Its claim_hyperbole was remarkably low at 1/5, ensuring a prior_credence of 0.9 and a perfect likelihood_penalty of 1.0 with no absurdity discount applied. Consequently, the combination of pristine methodological grounding and peer attention propelled it to a final posterior score of 0.925."
+        "justification": "This meta-analysis secured the top rank by combining a high study_design prior credence of 0.95 with a robust sample_size of 1811 and zero likelihood_penalty due to a modest claim_hyperbole of 2/5. Its solid foundation was further buoyed by the highest citation velocity among the three, achieving a normalized velocity score of 0.127. Consequently, the blend of methodological rigor and strong initial velocity propelled its posterior score to 0.7444."
       },
       {
-        "pmid": "40736113",
+        "pmid": "39412509",
         "rank": 2,
-        "justification": "Securing the second rank, this study leveraged a top-tier Meta-Analysis study_design and a large sample_size of 1811 to earn a strong prior_credence of 0.95. Its claim_hyperbole was evaluated at 2/5, yet it still maintained a clean likelihood_penalty of 1.0 with zero discrepancy index penalties. However, a modest velocity_norm of 0.261 limited its final posterior score to 0.7777, placing it just behind the velocity leader."
+        "justification": "This randomized controlled trial achieved a strong second-place position through a combination of a solid study_design, a preregistration bonus yielding a prior_credence of 0.95, and a low claim_hyperbole of 1/5. Despite a smaller sample_size of 800 compared to the others, it suffered no likelihood_penalty and maintained a respectable normalized citation velocity of 0.085. These factors coalesced into a highly competitive posterior score of 0.7337."
       },
       {
         "pmid": "39903735",
         "rank": 3,
-        "justification": "This paper claimed the third position supported by an extensive Meta-Analysis study_design and a massive sample_size of 9324, granting it the highest prior_credence of 0.95. The claim_hyperbole was measured at 2/5, yielding a completely unpenalized likelihood_penalty of 1.0. Ultimately, its very low velocity_norm of 0.099 held its posterior score down to 0.7371, leaving it trailing the higher-velocity papers."
+        "justification": "This systematic review and network meta-analysis earned the third rank by leveraging a top-tier study_design prior_credence of 0.95 and an impressively large sample_size of 9324. It maintained a clean likelihood_penalty of 1.0 alongside a moderate claim_hyperbole of 2/5, though its lower normalized citation velocity of 0.048 pulled down its overall momentum. Ultimately, this resulted in a respectable posterior score of 0.7245, trailing closely behind the top two due to slower traction."
       }
     ],
-    "overall_defense": "Citation velocity was the decisive factor separating rank 1 from ranks 2 and 3, as the top paper's velocity_norm of 1.0 completely overshadowed its competitors despite their slightly higher prior credences. Meanwhile, the likelihood and absurdity penalties played no distinguishing role because all three papers maintained a clean likelihood penalty of 1.0 due to controlled hyperbole relative to their strong designs. This ordering is entirely defensible under a balanced Bayesian-velocity framework that rewards high-impact empirical engagement alongside solid clinical methodology."
+    "overall_defense": "The ordering between rank 1, rank 2, and rank 3 was ultimately decided by citation velocity, because all three papers shared an identical prior credence of 0.95 and faced zero likelihood penalties. Since methodological rigor and hyperbole discounts neutralized each other across the board, the final positional separation came down entirely to the 25% weighted contribution of normalized citation velocity. This is entirely defensible under the deterministic formula, rewarding papers that simultaneously maintain high design standards and active real-world scientific engagement."
   }
 }

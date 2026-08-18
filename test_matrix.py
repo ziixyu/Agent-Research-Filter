@@ -20,11 +20,15 @@ from agent import (
     apply_audit_flags,
     clip01,
     detect_anomaly,
+    score_one,
     score_papers,
 )
 
 
-def make_case(pmid, design, year, n, citations, hype):
+def make_case(
+    pmid, design, year, n, citations, hype,
+    *, ci_lower=None, ci_upper=None, is_preregistered=False, doi=None,
+):
     meta = PaperMetadata(
         pmid=pmid,
         title=f"Paper {pmid}",
@@ -32,8 +36,17 @@ def make_case(pmid, design, year, n, citations, hype):
         publication_year=year,
         citations=citations,
         citations_mocked=True,
+        doi=doi,
     )
-    tele = PaperTelemetry(is_relevant=True, study_design=design, sample_size=n, claim_hyperbole=hype)
+    tele = PaperTelemetry(
+        is_relevant=True,
+        study_design=design,
+        sample_size=n,
+        claim_hyperbole=hype,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        is_preregistered=is_preregistered,
+    )
     return meta, tele
 
 
@@ -376,6 +389,250 @@ def test_detect_contradictions_no_edge_when_directions_agree():
         ("2", "Study B", "significantly improved outcomes were reported"),
     ]
     assert graph_memory.detect_contradictions(papers) == []
+
+
+# --------------------------------------------------------------------------
+# graph_memory.py: signed citation sentiment heuristic.
+# --------------------------------------------------------------------------
+
+
+def test_citation_sentiment_supporting_when_directions_agree():
+    texts = {
+        "1": ("Study A", "significant reduction in fibrosis observed"),
+        "2": ("Study B", "significantly reduced fibrosis was also seen"),
+    }
+    assert graph_memory.citation_sentiment("1", "2", texts) == "SUPPORTING"
+
+
+def test_citation_sentiment_refuting_when_directions_oppose():
+    texts = {
+        "1": ("Study A", "significant reduction in fibrosis observed"),
+        "2": ("Study B", "no significant improvement was observed"),
+    }
+    assert graph_memory.citation_sentiment("1", "2", texts) == "REFUTING"
+
+
+def test_citation_sentiment_mention_when_ambiguous_or_missing():
+    texts = {"1": ("Study A", "neutral text, nothing decisive")}
+    assert graph_memory.citation_sentiment("1", "2", texts) == "MENTION"  # dst missing
+    assert graph_memory.citation_sentiment("1", "1", texts) == "MENTION"  # neutral direction
+    assert graph_memory.citation_sentiment("1", "2", None) == "MENTION"  # no texts at all
+
+
+# --------------------------------------------------------------------------
+# Statistical Precision Penalty (CI -> SE) and preregistration bonus.
+# --------------------------------------------------------------------------
+
+
+def test_precision_penalty_absent_without_ci():
+    comp = score_one(0.90, claim_hyperbole=1, w_n=0.5, v_norm=0.5)
+    assert comp["standard_error"] is None
+    assert comp["precision_penalty"] == 1.0
+
+
+def test_precision_penalty_absent_for_tight_ci():
+    """SE = (ci_upper - ci_lower) / 3.92. A tight CI (SE <= 0.5, the
+    threshold) must not be penalized."""
+    comp = score_one(0.90, claim_hyperbole=1, w_n=0.5, v_norm=0.5, ci_lower=1.0, ci_upper=2.96)
+    expected_se = (2.96 - 1.0) / 3.92
+    assert abs(comp["standard_error"] - expected_se) < 1e-9
+    assert expected_se <= 0.5 + 1e-9
+    assert comp["precision_penalty"] == 1.0
+
+
+def test_precision_penalty_applies_for_wide_ci():
+    """A wide CI (SE > 0.5) must trigger a real (<1.0) precision penalty,
+    and posterior_score must be strictly lower than the same paper with a
+    tight CI, all else equal."""
+    tight = score_one(0.90, claim_hyperbole=1, w_n=0.5, v_norm=0.5, ci_lower=1.0, ci_upper=2.0)
+    wide = score_one(0.90, claim_hyperbole=1, w_n=0.5, v_norm=0.5, ci_lower=1.0, ci_upper=10.0)
+    assert tight["precision_penalty"] == 1.0
+    assert wide["standard_error"] > 0.5
+    assert wide["precision_penalty"] < 1.0
+    assert wide["posterior_score"] < tight["posterior_score"]
+
+
+def test_preregistration_bonus_boosts_effective_prior():
+    not_prereg = score_one(0.90, claim_hyperbole=1, w_n=0.5, v_norm=0.5, is_preregistered=False)
+    prereg = score_one(0.90, claim_hyperbole=1, w_n=0.5, v_norm=0.5, is_preregistered=True)
+    assert not_prereg["preregistration_bonus"] == 0.0
+    assert prereg["preregistration_bonus"] == 0.05
+    assert abs(prereg["effective_prior_credence"] - (0.90 + 0.05)) < 1e-9
+    assert prereg["posterior_score"] > not_prereg["posterior_score"]
+
+
+def test_preregistration_bonus_is_capped_at_one():
+    comp = score_one(0.99, claim_hyperbole=1, w_n=0.5, v_norm=0.5, is_preregistered=True)
+    assert comp["effective_prior_credence"] == 1.0  # 0.99 + 0.05 clipped, not 1.04
+
+
+def test_score_papers_end_to_end_with_ci_and_preregistration():
+    """Integration check: score_papers() actually threads ci_lower/ci_upper/
+    is_preregistered from telemetry through to the ScoredPaper output."""
+    cases = [
+        make_case(
+            "prereg_tight_ci", "RCT", 2024, 500, 20, 1,
+            ci_lower=1.0, ci_upper=1.8, is_preregistered=True,
+        ),
+    ]
+    scored = score_papers(cases)
+    p = scored[0]
+    assert p.preregistration_bonus == 0.05
+    assert p.standard_error is not None and p.standard_error < 0.5
+    assert p.precision_penalty == 1.0
+    assert p.prior_credence == round(p.base_prior_credence + 0.05, 4)
+
+
+# --------------------------------------------------------------------------
+# Out-of-distribution study designs & Jeffreys priors.
+# --------------------------------------------------------------------------
+
+
+def test_ood_design_registers_jeffreys_prior():
+    conn = _fresh_db()
+    assert conn.execute(
+        "SELECT 1 FROM design_priors WHERE tier = ?", ("Mendelian Randomization",)
+    ).fetchone() is None
+
+    p = graph_memory.get_prior_credence(conn, "Mendelian Randomization", 5000)
+    assert p == graph_memory.JEFFREYS_MEAN == 0.5
+
+    row = conn.execute(
+        "SELECT alpha, beta FROM design_priors WHERE tier = ?", ("Mendelian Randomization",)
+    ).fetchone()
+    assert row == (graph_memory.JEFFREYS_ALPHA, graph_memory.JEFFREYS_BETA)
+    conn.close()
+
+
+def test_ood_design_registration_is_idempotent_after_feedback():
+    """Calling get_prior_credence() again for a design that has since
+    received human feedback must NOT reset it back to the Jeffreys prior."""
+    conn = _fresh_db()
+    graph_memory.get_prior_credence(conn, "Organ-on-a-Chip", 10)
+    graph_memory.record_feedback(conn, tier="Organ-on-a-Chip", action="confirm", pmid="1")
+    a1, b1 = graph_memory.get_current_prior_hyperparams(conn)["Organ-on-a-Chip"]
+    assert (a1, b1) == (graph_memory.JEFFREYS_ALPHA + 1.0, graph_memory.JEFFREYS_BETA)
+
+    graph_memory.get_prior_credence(conn, "Organ-on-a-Chip", 10)  # should not reset
+    a2, b2 = graph_memory.get_current_prior_hyperparams(conn)["Organ-on-a-Chip"]
+    assert (a2, b2) == (a1, b1)
+    conn.close()
+
+
+def test_beta_tier_for_novel_design_is_its_own_tier():
+    """An unrecognized design must resolve to a tier named after itself,
+    not silently fold into an unrelated known tier (e.g. Retrospective)."""
+    tier = graph_memory.beta_tier_for("Organ-on-a-Chip", 10)
+    assert tier == "Organ-on-a-Chip"
+    assert graph_memory.is_ood_tier(tier)
+    assert not graph_memory.is_ood_tier("Retrospective")
+
+
+def test_score_papers_handles_ood_design_without_crashing():
+    """score_papers() must never raise on a study_design outside the 6
+    known tiers ('do not fail on unknown categories') — it should fall back
+    to the Jeffreys mean and flag is_ood_design=True."""
+    cases = [make_case("novel", "Mendelian Randomization", 2024, 5000, 20, 1)]
+    scored = score_papers(cases)  # default prior_lookup = seed_prior_means(), no DB
+    assert scored[0].is_ood_design is True
+    assert scored[0].base_prior_credence == graph_memory.JEFFREYS_MEAN
+
+
+# --------------------------------------------------------------------------
+# backtest_calibration.py: automated calibration updates.
+# --------------------------------------------------------------------------
+
+
+def test_apply_verdict_robust_maps_to_confirm():
+    import backtest_calibration as bc
+
+    conn = _fresh_db()
+    before = graph_memory.get_current_prior_hyperparams(conn)["Retrospective"]
+    verdict = bc.CalibrationVerdict(
+        sample_power_adequate=True, selective_reporting_risk=False,
+        endpoint_validity_concern=False, verdict="ROBUST", rationale="Solid.",
+    )
+    new_a, new_b = bc.apply_verdict(conn, "Retrospective", verdict, pmid="1")
+    assert (new_a, new_b) == (before[0] + 1.0, before[1])
+    conn.close()
+
+
+def test_apply_verdict_vulnerable_maps_to_reject():
+    import backtest_calibration as bc
+
+    conn = _fresh_db()
+    before = graph_memory.get_current_prior_hyperparams(conn)["Retrospective"]
+    verdict = bc.CalibrationVerdict(
+        sample_power_adequate=False, selective_reporting_risk=True,
+        endpoint_validity_concern=True, verdict="VULNERABLE", rationale="Weak.",
+    )
+    new_a, new_b = bc.apply_verdict(conn, "Retrospective", verdict, pmid="1")
+    assert (new_a, new_b) == (before[0], before[1] + 1.0)
+    conn.close()
+
+
+def test_run_calibration_pass_logs_a_result_per_judged_paper():
+    """run_calibration_pass() drives judge_paper() per paper — verified here
+    with a stub judge (no live Gemini call) standing in for judge_paper."""
+    import backtest_calibration as bc
+
+    conn = _fresh_db()
+    papers = [
+        {
+            "metadata": {"pmid": "1", "title": "T1", "abstract": "A1"},
+            "telemetry": {"study_design": "RCT", "sample_size": 400, "claim_hyperbole": 1, "is_preregistered": True},
+            "prior_credence": 0.9, "posterior_score": 0.8,
+        },
+        {
+            "metadata": {"pmid": "2", "title": "T2", "abstract": "A2"},
+            "telemetry": {"study_design": "Retrospective/Observational", "sample_size": 50, "claim_hyperbole": 5, "is_preregistered": False},
+            "prior_credence": 0.4, "posterior_score": 0.1,
+        },
+    ]
+    stub_verdicts = {
+        "1": bc.CalibrationVerdict(sample_power_adequate=True, selective_reporting_risk=False, endpoint_validity_concern=False, verdict="ROBUST", rationale="ok"),
+        "2": bc.CalibrationVerdict(sample_power_adequate=False, selective_reporting_risk=True, endpoint_validity_concern=True, verdict="VULNERABLE", rationale="weak"),
+    }
+    original_judge = bc.judge_paper
+    bc.judge_paper = lambda client, model, paper: stub_verdicts[paper["metadata"]["pmid"]]
+    try:
+        result = bc.run_calibration_pass(client=None, model="stub", conn=conn, papers=papers)
+    finally:
+        bc.judge_paper = original_judge
+
+    assert len(result["results"]) == 2
+    assert result["results"][0]["verdict"]["verdict"] == "ROBUST"
+    assert result["results"][1]["verdict"]["verdict"] == "VULNERABLE"
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# URL formatting and metadata preservation.
+# --------------------------------------------------------------------------
+
+
+def test_paper_metadata_url_auto_fills_from_pmid():
+    meta = PaperMetadata(
+        pmid="12345678", title="T", abstract="A", publication_year=2024, citations=0,
+    )
+    assert meta.url == "https://pubmed.ncbi.nlm.nih.gov/12345678/"
+    assert meta.doi is None
+
+
+def test_paper_metadata_url_explicit_value_is_preserved():
+    meta = PaperMetadata(
+        pmid="1", title="T", abstract="A", publication_year=2024, citations=0,
+        url="https://example.org/custom",
+    )
+    assert meta.url == "https://example.org/custom"
+
+
+def test_paper_metadata_doi_round_trips_through_scoring():
+    case = make_case("1", "RCT", 2024, 100, 10, 1, doi="10.1000/xyz123")
+    scored = score_papers([case])
+    dumped = scored[0].model_dump()
+    assert dumped["metadata"]["doi"] == "10.1000/xyz123"
+    assert dumped["metadata"]["url"] == "https://pubmed.ncbi.nlm.nih.gov/1/"
 
 
 if __name__ == "__main__":

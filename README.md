@@ -32,16 +32,22 @@ paper X above paper Y.
 [MEMORY]     SQLite + networkx                 persists the graph and learns from feedback
 ```
 
-Three modules beyond the core pipeline:
+Four modules beyond the core pipeline:
 
 - **`graph_memory.py`** — a persistent knowledge graph (SQLite + `networkx.DiGraph`) and
-  Empirical Bayesian active learning over the priors themselves (see "Active learning" below).
+  Empirical Bayesian active learning over the priors themselves (see "Active learning" below),
+  including out-of-distribution study designs (see "Out-of-distribution designs" below).
 - **The fail-safe/HITL gate in `agent.py`** — `python agent.py --interactive` halts on any
   paper that trips a severity threshold and asks a human operator to confirm, override, or
   quarantine it (see "Fail-safe & HITL gate" below).
+- **`backtest_calibration.py`** — `python backtest_calibration.py --iterations N` runs an
+  adversarial LLM "red team" critic over already-scored papers and automatically feeds its
+  verdicts into the same Beta-update mechanism a human HITL decision uses (see "Autonomous
+  calibration engine" below).
 - **`ui.py`** — `streamlit run ui.py`, a live dashboard over a completed run: an instantly
   recomputable ranking table, the knowledge graph rendered with physics, a HITL override panel,
-  and a counterfactual arbiter console (see "Dashboard" below).
+  a paper inspector with live PubMed/DOI links, and a counterfactual arbiter console (see
+  "Dashboard" below).
 
 ### Reasoning Step 1 — the relevance gate
 
@@ -97,14 +103,21 @@ has no phase field for RCTs (the tiers do). Every category is mapped explicitly 
   6-category schema instead of the spec's 6 tier names, with `RCT` still split by the
   phase heuristic above.
 
+**1b. Preregistration bonus.** A trial registry ID (NCT/ISRCTN/...) makes after-the-fact
+outcome-switching and cherry-picking harder to get away with, so a preregistered trial gets a
+flat **+0.05** added to its tier's prior, capped at 1.0: `effective_prior = clip01(base_prior +
+0.05)`. This is a modifier on top of the design-tier prior, not a 7th evidence tier of its own
+— everything downstream (rigor_baseline, D, the posterior) uses `effective_prior`.
+
 **2. Likelihood penalty L(Absurdity) — the epistemic gate.** A Discrepancy Index
 `D = claim_hyperbole − rigor_baseline` measures how far a paper's claim strength (1–5) overshoots
-what its own tier could justify, where `rigor_baseline = P(E) × 5` (the same 1–5 scale,
-anchored to the prior). An observational study (P(E)=0.40, baseline≈2.0) claiming a definitive
-"reversal/cure" (hyperbole=5) gets D=3.0; the same claim from a meta-analysis (P(E)=0.95,
-baseline≈4.75) gets D≈0.25 — the exact "observational study claiming causal cure/reversal
-yields a high D" example this was built around. **Underclaiming is never punished** — D is
-clamped to 0 when the claim is more cautious than the tier's baseline; modesty is free.
+what its own tier could justify, where `rigor_baseline = effective_prior × 5` (the same 1–5
+scale, anchored to the prior). An observational study (P(E)=0.40, baseline≈2.0) claiming a
+definitive "reversal/cure" (hyperbole=5) gets D=3.0; the same claim from a meta-analysis
+(P(E)=0.95, baseline≈4.75) gets D≈0.25 — the exact "observational study claiming causal
+cure/reversal yields a high D" example this was built around. **Underclaiming is never
+punished** — D is clamped to 0 when the claim is more cautious than the tier's baseline;
+modesty is free.
 
 D is then moderated by a **Sample Power Weight** `W_N = log10(N+1)`, min-max normalized across
 the batch to [0,1] — the same overclaim from N=5,000 is treated as less absurd than the
@@ -117,16 +130,36 @@ L(Absurdity) = 1.0                          if D_adjusted <= threshold (0.5)
              = exp(−k × (D_adjusted − threshold))     otherwise, k = 0.5
 ```
 
+**2b. Statistical Precision Penalty.** If the abstract reports a 95% CI for the primary
+endpoint, the Standard Error is recovered via the standard normal approximation (a 95% CI spans
+~1.96 SE on each side of the point estimate): `SE = (ci_upper − ci_lower) / 3.92`. A wide CI
+means the underlying estimate is noisier than the claim's confidence lets on, so it discounts
+credence with the exact same shape as the likelihood penalty — smoothly, past a tolerance
+threshold, and **only** when a CI was actually reported (no CI -> no penalty; this discounts
+*reported-but-noisy* precision, it does not punish a paper for omitting a CI, which is a
+separate, unmodeled concern):
+
+```
+PrecisionPenalty = 1.0                              if SE is None or SE <= 0.5
+                  = exp(−k2 × (SE − 0.5))            otherwise, k2 = 0.5
+```
+
 **3. Posterior score — the final ranking metric:**
 
 ```
-S_posterior = clip01( [P(E) × L(Absurdity)] × 0.75 + [Velocity_norm] × 0.25 )
+S_posterior = clip01( [effective_prior × L(Absurdity) × PrecisionPenalty] × 0.75
+                     + [Velocity_norm] × 0.25 )
 ```
 
 `Velocity_norm` is unchanged from the original design: citations ÷ years-since-publication,
 min-max normalized across the batch. `clip01` is a defensive floor/ceiling — every input is
 already bounded to [0,1] by construction, so this is a safety net against a future weight
 change quietly breaking that invariant, not something that fires in practice today.
+
+Every intermediate quantity is preserved on the output, not just the final score:
+`base_prior_credence`, `preregistration_bonus`, `prior_credence` (the effective value),
+`standard_error`, `precision_penalty` — so a reviewer can audit exactly which factor moved a
+paper's rank, not just trust the final number.
 
 **Why 0.75/0.25 and not 0.5/0.5, or the reverse?** This is the judgment call the assignment
 asks for, and it's defensible rather than "correct":
@@ -165,19 +198,14 @@ asks for, and it's defensible rather than "correct":
   or phase, and the Discrepancy Index remains the backstop that catches an RCT whose *claims*
   overreach its actual design regardless of which phase bucket it landed in.
 
-Verify the logic yourself: `python test_matrix.py` runs 24 network-free unit tests — the
-original 10 against the posterior formula (prior dominates when nothing else differs, the exact
-"hyped observational study vs. modest RCT" scenario resolves as intended, the likelihood penalty
-is isolated and attributable, Sample Power Weight measurably softens the same overclaim for a
-larger N, underclaiming is never punished, scores never leave [0,1], tied/single-paper batches
-don't divide by zero) plus 14 more added for this pass: the fail-safe anomaly gate (triggers on
-D≥2.0, triggers on N<30 for an interventional design, does NOT trigger on a small
-non-interventional sample or an ordinary paper) and `graph_memory.py`'s Empirical Bayesian
-updates (seed means match the spec exactly, RCT phase-splitting, confirm/reject/override each
-move alpha/beta the way the math promises, feedback on one tier never bleeds into another, the
-contradiction-edge heuristic fires on opposing outcome language and not on agreement). Every
-SQLite test in that second batch uses a private `:memory:` database — none of them touch a real
-`epistemic_memory.db` on disk.
+Verify the logic yourself: `python -m pytest test_matrix.py -v` (or plain `python test_matrix.py`)
+runs 43 network-free unit tests: the original 10 against the posterior formula, 14 more added
+for the fail-safe/active-learning pass (the anomaly gate's trigger conditions, Empirical
+Bayesian updates, the contradiction heuristic), and 19 more added for the extended-telemetry
+pass covering the precision penalty, the preregistration bonus, out-of-distribution Jeffreys
+priors, signed citation sentiment, `backtest_calibration.py`'s verdict-to-feedback mapping, and
+URL/DOI metadata preservation. Every SQLite test uses a private `:memory:` database — none of
+them touch a real `epistemic_memory.db` on disk.
 
 ### LLM Step 2 — the arbiter
 
@@ -210,6 +238,60 @@ review (or from the dashboard's override panel) genuinely changes the next run's
 just a log message. `score_papers()` itself still defaults to `graph_memory.seed_prior_means()`
 (pure, I/O-free) when no `prior_lookup` is given, which is what keeps `test_matrix.py`
 deterministic regardless of what's in any real `epistemic_memory.db` on disk.
+
+## Out-of-distribution designs & Jeffreys priors (`graph_memory.py`)
+
+`PaperTelemetry.study_design` is a free-text `str`, not a fixed enum — the extraction prompt
+lists the 6 known categories as *preferred*, but explicitly permits the LLM to report something
+more specific ("Mendelian Randomization", "Organ-on-a-Chip") when a study genuinely doesn't fit
+any of them, rather than forcing a bad fit. That freedom is worthless without a scoring layer
+that can actually handle it without crashing.
+
+`graph_memory.beta_tier_for()` resolves an unrecognized design to a tier **named after the
+design itself** (not silently folded into some unrelated known tier — an earlier version of
+this function did exactly that, defaulting anything unrecognized to "Retrospective", which
+would have quietly mis-priced every novel design as observational-grade evidence).
+`get_prior_credence(conn, study_design, sample_size)` then does the actual work: if that tier
+doesn't exist in the store yet, it's registered on the spot with an **uninformative Jeffreys
+prior, Beta(0.5, 0.5)** — `E[P(E)]=0.5`, and also the *maximum-variance* member of the
+Beta(a,a) family on [0,1] (`Var=0.125`), i.e. maximally noncommittal rather than falsely
+confident in either direction. `agent.py`'s `main()` calls this once per paper before scoring,
+so any novel design this batch introduces is registered (and included in `prior_lookup`) before
+`score_papers()` runs — and `score_papers()` itself still has its own fallback
+(`prior_lookup.get(tier, JEFFREYS_MEAN)`) so it can never `KeyError` even if a caller skips that
+step, matching "do not fail on unknown categories" literally.
+
+Registration is idempotent and one-way once feedback exists: calling `get_prior_credence()`
+again for a tier a human (or `backtest_calibration.py`) has since given feedback on does **not**
+reset it back to Beta(0.5, 0.5) — `test_ood_design_registration_is_idempotent_after_feedback`
+checks this explicitly. Every `ScoredPaper` carries `is_ood_design: bool` so the dashboard and
+CLI table can flag it (🆕/OOD badge) without a reviewer having to know the tier list by heart.
+
+## Autonomous calibration engine (`backtest_calibration.py`)
+
+A separate, deliberately-invoked tool: an adversarial LLM "red team" critic re-judges
+already-scored papers against three methodological stress tests — sample power adequacy,
+selective-reporting risk, and endpoint validity (hard clinical outcome vs. oversold surrogate)
+— and automatically calls `graph_memory.record_feedback()` for each one: a **ROBUST** verdict
+maps to `action="confirm"` (`alpha += 1`), a **VULNERABLE** verdict maps to `action="reject"`
+(`beta += 1`) — the exact same feedback vocabulary a human HITL decision uses, via the exact
+same function, so there is only ever one place in the codebase that knows how to move a Beta
+distribution.
+
+```bash
+python backtest_calibration.py                          # 1 pass over sample_run_output.json
+python backtest_calibration.py --iterations 5 --db scratch_memory.db   # self-optimizing loop
+```
+
+This is explicitly a calibration tool, not part of the normal `agent.py` pipeline — repeated
+passes keep shifting the same tiers' priors (that's the point of `--iterations`), so a live run
+against real data (see "Edge cases" below) genuinely produced adversarial, specific critiques —
+e.g. correctly flagging a Review/Opinion paper's `N=0` as making "statistical power... entirely
+inapplicable," and multiple papers for lacking preregistration — and visibly moved
+`Review/In Vitro`'s mean from 0.150 to 0.120 and `Phase III RCT`'s from 0.900 to 0.783 in a
+single pass. Point `--db` at a scratch copy if you want to experiment without touching your main
+learned priors; the mapping logic itself (`apply_verdict`) is unit-tested independently of any
+live Gemini call.
 
 ## Fail-safe & HITL anomaly gate (`agent.py`)
 
@@ -252,13 +334,18 @@ audit trail than the node schema alone provides.
 SQLite (`epistemic_memory.db`) is the durable store; `networkx.DiGraph` is an in-memory view
 built from it for graph algorithms and the dashboard. Every scored paper becomes a node
 (pmid, title, study_design, sample_size, prior_credence, discrepancy_index,
-likelihood_penalty, posterior_score, audit_status). Two kinds of edges:
+likelihood_penalty, posterior_score, audit_status, **url, doi**). Two kinds of edges, both
+**signed** with a sentiment tag (`SUPPORTING` / `MENTION` / `REFUTING`), not just present/absent:
 
 - **Citation edges — real data**, not mocked. `fetch_citation_edges_from_pubmed()` calls
   `Bio.Entrez.elink` (`pubmed_pubmed_refs`) and keeps only links where *both* papers are in our
   own fetched batch (we only have telemetry for our own batch, so a citation to a paper outside
   it isn't graphable anyway). This found real edges in every live test run — see
-  `sample_run_output.json`'s companion `epistemic_memory.db`.
+  `sample_run_output.json`'s companion `epistemic_memory.db` (a live run found 9 citation edges,
+  8 tagged `SUPPORTING` and 1 `MENTION`). Sentiment is computed by `citation_sentiment()`,
+  reusing the exact same outcome-direction heuristic as contradiction detection below: if both
+  papers' abstracts report the same non-neutral direction, `SUPPORTING`; opposite, `REFUTING`;
+  either side ambiguous or its text unavailable, `MENTION`.
 - **Contradiction edges — a disclosed keyword heuristic, not semantic NLI.**
   `infer_outcome_direction()` scans title+abstract for a small set of positive-outcome phrases
   ("significant reduction", "improvement", ...) vs. negative/null-outcome phrases ("no
@@ -266,9 +353,16 @@ likelihood_penalty, posterior_score, audit_status). Two kinds of edges:
   outright — a negated result like "no significant improvement" contains the substring
   "improvement" (a positive keyword), and naive substring matching can't tell negated language
   from an affirmative claim otherwise. Two relevant papers with opposite inferred directions get
-  a contradiction edge. This is deliberately cheap (zero extra LLM calls — this repo already
-  documents real free-tier quota pain) rather than accurate; it's meant to surface *candidates*
-  for a human to actually read, not to assert a contradiction is real.
+  a contradiction edge, unconditionally tagged `REFUTING` — a detected contradiction IS a
+  refuting relationship by definition. This is deliberately cheap (zero extra LLM calls — this
+  repo already documents real free-tier quota pain) rather than accurate; it's meant to surface
+  *candidates* for a human to actually read, not to assert a contradiction is real.
+
+`nodes.url`/`nodes.doi` and `edges.sentiment` were added to an already-committed schema, not
+designed in from scratch — `graph_memory.init_db()` runs a small migration
+(`_ensure_column()`, `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`) on every open, so the
+already-committed `epistemic_memory.db` from an earlier version of this repo upgrades in place
+instead of needing to be deleted and regenerated.
 
 ## Dashboard (`ui.py`)
 
@@ -283,15 +377,27 @@ Reads a completed run's JSON output plus `epistemic_memory.db`. It never re-call
   function the CLI pipeline uses (not a re-implementation that could drift out of sync) against
   the already-extracted `prior_credence`/`likelihood_penalty`/`velocity_norm` — no new
   extraction, no new Gemini calls.
+  extraction, no new Gemini calls. The PMID column renders as a clickable link to PubMed
+  (`st.column_config.LinkColumn`, with a regex `display_text` so the cell shows the bare PMID
+  rather than the full URL); 🆕/✅ badge columns flag out-of-distribution designs and
+  preregistered trials at a glance.
 - **Physics-based graph** — rendered via embedded pyvis HTML (`cdn_resources="in_line"` — see
-  the edge case below for why that flag matters). Node size ∝ log10(N); node color interpolates
-  green (high `S_posterior`) to red (low/penalized); contradiction edges render bold red
-  dashed, citation edges plain gray.
-- **HITL Override Panel** — every `FLAGGED` paper gets a card with a live-preview P(E) slider
-  (shows what the posterior *would* become before you commit) and Apply/Quarantine buttons that
-  write straight through `graph_memory.record_feedback()` into `epistemic_memory.db` — the same
-  store `agent.py --interactive` writes to, so a decision made in the dashboard is loaded by the
-  next CLI run and vice versa.
+  the edge case below for why that flag matters). Node size ∝ log10(N); node fill color
+  interpolates green (high `S_posterior`) to red (low/penalized); node **border** color flags
+  out-of-distribution designs (violet) and preregistered trials (green); hovering any node shows
+  a clickable PubMed link plus full telemetry in the tooltip. Citation edges are colored by
+  sentiment (green=SUPPORTING, gray=MENTION, red dashed=REFUTING); contradiction edges always
+  render bold red dashed.
+- **Paper Inspector** — pick any paper from a dropdown to see its full metadata, a "View on
+  PubMed" and "View DOI" link button pair (`st.link_button`), the reported 95% CI/p-value if
+  extracted, and the base-prior → bonus → effective-prior → posterior breakdown for that
+  specific paper.
+- **HITL Override Panel** — every `FLAGGED` paper gets a card (with its own "View on PubMed"
+  button) with a live-preview P(E) slider (shows what the posterior *would* become before you
+  commit) and Apply/Quarantine buttons that write straight through
+  `graph_memory.record_feedback()` into `epistemic_memory.db` — the same store
+  `agent.py --interactive` writes to, so a decision made in the dashboard is loaded by the next
+  CLI run and vice versa.
 - **Arbiter + counterfactual console** — renders the persisted arbiter justification, plus a
   free-text box that calls Gemini live (`agent.counterfactual_arbiter()`, reusing
   `call_gemini_with_retry`) with a user-supplied hypothetical ("re-evaluate if liver stiffness
@@ -347,6 +453,18 @@ generated HTML, sidestepping the base-URL mismatch entirely. Caught by actually 
 dashboard in a browser and reading the console — not by code review, which wouldn't have
 surfaced a runtime-only, iframe-context-dependent path resolution bug.
 
+### 4. A running dashboard silently locked the database file
+
+Mid-development, `rm epistemic_memory.db` failed with `Device or resource busy` — a `streamlit`
+process from an earlier verification pass was still holding the SQLite file open (Windows locks
+files more aggressively than POSIX does; a still-running reader is enough). This isn't a code
+bug so much as an operational one worth naming: SQLite connections opened by a long-running
+Streamlit session don't release the file just because the browser tab closed. Fix at the time
+was `taskkill` on the stray process; the durable takeaway (and why `graph_memory.init_db()`'s
+migration path matters — see "Persistent knowledge graph" above) is that this repo is built to
+tolerate *upgrading* an existing `epistemic_memory.db` in place rather than assuming you can
+always delete and recreate it on demand.
+
 ## What I'd flag as a known limitation (and defend anyway)
 
 - **Citation counts are mocked** (`random.randint(0, 200)`), logged loudly at runtime, and
@@ -363,10 +481,37 @@ surfaced a runtime-only, iframe-context-dependent path resolution bug.
   paper in any live run made a claim absurd enough (D≥2.0) or ran an interventional trial small
   enough (N<30) to trip the gate. That's a property of the corpus, not evidence the gate doesn't
   work: all 3 HITL decision paths (confirm/override/quarantine) were exercised by hand against
-  synthetic anomaly data with real piped stdin, and 5 of the 24 automated tests specifically
+  synthetic anomaly data with real piped stdin, and 5 of the 43 automated tests specifically
   target `detect_anomaly()`/`apply_audit_flags()`. **With more time**, I'd want at least one
   intentionally-adversarial query in the demo corpus (a preprint server or a known-retracted
-  paper) so the gate fires on genuinely real data, not just synthetic test fixtures.
+  paper) so the gate fires on genuinely real data, not just synthetic test fixtures. (The
+  adversarial calibration engine, `backtest_calibration.py`, DID fire real VULNERABLE verdicts
+  against real data in a live run — see "Autonomous calibration engine" above — but that's a
+  separate mechanism from this anomaly gate.)
+- **`p_value` is extracted but never used in scoring.** The telemetry schema captures it because
+  the spec asked for it, and it's visible in the Paper Inspector and `run_output.json` for a
+  human to read, but only the CI-derived Standard Error feeds the Precision Penalty. A p-value
+  alone (without the CI it was computed from) doesn't cleanly convert to the same SE-shaped
+  penalty, and I didn't want to invent a second, differently-shaped statistical penalty under
+  deadline pressure just to use a field that mostly duplicates what the CI already signals.
+  **With more time:** a p-value-only fallback penalty (when CI bounds are absent but a p-value
+  is present) is a natural, scoped addition.
+- **The preregistration bonus trusts the LLM's read of the abstract**, not an independent
+  registry lookup — `is_preregistered=True` means "the abstract text mentions something that
+  looks like a trial registry ID," not "I verified this NCT number against ClinicalTrials.gov."
+  A hallucinated or misread registry mention would incorrectly earn the +0.05 bonus. **With more
+  time:** a regex extraction of the actual NCT/ISRCTN identifier plus a live registry lookup
+  would convert this from "the LLM says so" to "verified," and is a natural extension of the
+  `ci_lower`/`ci_upper`/`p_value` fields already being extracted as plain data, not judgments.
+- **`backtest_calibration.py`'s self-optimizing loop has no convergence guarantee or dampening.**
+  Each `--iterations` pass re-judges the same static batch and applies feedback again — nothing
+  stops `alpha`/`beta` from drifting arbitrarily far from the seed values over many iterations
+  against a small, non-independent sample (the same handful of papers, re-critiqued by a model
+  that isn't perfectly consistent run to run at `temperature=0.4`). This is disclosed in the
+  tool's own docstring/`--help`, not hidden — it's explicitly a calibration/backtesting tool, run
+  deliberately, not something `agent.py`'s normal pipeline invokes automatically. **With more
+  time:** a decay/cap on cumulative iteration influence, or requiring a larger and more diverse
+  backtest corpus before trusting multi-iteration runs, would make repeated runs safer.
 - **`audit_status` has only 3 values** (`PASSED`/`FLAGGED`/`OVERRIDDEN`, per the given node
   schema), so a manual prior clamp and an outright quarantine/reject are indistinguishable from
   the node's `audit_status` alone — both land on `OVERRIDDEN`. The finer distinction (which
@@ -432,10 +577,18 @@ Then explore it live:
 streamlit run ui.py
 ```
 
+Or run the adversarial calibration engine against a completed run (separate from the normal pipeline):
+
+```bash
+python backtest_calibration.py --iterations 5 --input sample_run_output.json
+```
+
 Run the offline logic tests any time (no keys, no network, <1s):
 
 ```bash
 python test_matrix.py
+# or, exactly as specified:
+python -m pytest test_matrix.py -v
 ```
 
 ## Repo layout
@@ -443,8 +596,11 @@ python test_matrix.py
 ```
 agent.py                 pipeline: fetch -> extract -> filter -> score -> fail-safe/HITL -> arbiter
 graph_memory.py          persistent knowledge graph (SQLite + networkx) + Bayesian active learning
+                          + OOD/Jeffreys priors + signed citation/contradiction topology
+backtest_calibration.py  autonomous adversarial calibration engine (separate CLI entry point)
 ui.py                    Streamlit dashboard (streamlit run ui.py)
-test_matrix.py           24 offline unit tests (posterior formula, anomaly gate, Beta updates)
+test_matrix.py           43 offline unit tests (posterior formula, anomaly gate, Beta updates,
+                          OOD priors, precision penalty, citation sentiment, calibration mapping)
 requirements.txt
 .env.example
 sample_run_output.json   a real run's full output, committed so the ranking + justifications
