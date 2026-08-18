@@ -143,6 +143,50 @@ PRECISION_DECAY_K = 0.5
 # a new evidence tier of its own, just a modifier on top of one.
 PREREGISTRATION_BONUS = 0.05
 
+# --------------------------------------------------------------------------
+# Configurable batch sizing & adaptive rate pacing
+# --------------------------------------------------------------------------
+BATCH_SIZE_MIN = 5
+BATCH_SIZE_MAX = 50
+RATE_PACING_BATCH_THRESHOLD = 10  # batches at/below this size aren't proactively paced
+RATE_PACING_MIN_INTERVAL = 4.2  # seconds between extraction calls once pacing is on
+RATE_PACING_MAX_BACKOFF = 60.0  # hard ceiling on any single reactive 429/503 backoff
+
+
+def _batch_size(value: str) -> int:
+    """argparse `type=` validator for --max-results/--limit/--batch-size:
+    must be an int in [BATCH_SIZE_MIN, BATCH_SIZE_MAX]."""
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"batch size must be an integer (got {value!r})")
+    if not (BATCH_SIZE_MIN <= n <= BATCH_SIZE_MAX):
+        raise argparse.ArgumentTypeError(
+            f"batch size must be between {BATCH_SIZE_MIN} and {BATCH_SIZE_MAX} (got {n})"
+        )
+    return n
+
+
+class RatePacer:
+    """Proactive throttle for the extraction loop: enforces a minimum gap
+    between successive Gemini calls once a batch is large enough to risk
+    the free tier's ~15 RPM ceiling. This is complementary to
+    call_gemini_with_retry()'s REACTIVE backoff (which only kicks in after
+    a 429/503 already happened) — pacing calls up front means a >10-paper
+    batch is less likely to trip the limit at all, rather than recovering
+    from it every other call."""
+
+    def __init__(self, min_interval: float = RATE_PACING_MIN_INTERVAL):
+        self.min_interval = min_interval
+        self._last_call: Optional[float] = None
+
+    def wait(self) -> None:
+        if self._last_call is not None:
+            remaining = self.min_interval - (time.monotonic() - self._last_call)
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_call = time.monotonic()
+
 
 # --------------------------------------------------------------------------
 # Data models
@@ -249,9 +293,13 @@ class ScoredPaper(BaseModel):
 
     is_ood_design: bool = False  # True if telemetry.study_design needed a Jeffreys-prior tier
 
-    # Epistemic fail-safe / HITL gate (see detect_anomaly/apply_audit_flags):
-    audit_status: Literal["PASSED", "FLAGGED", "OVERRIDDEN"] = "PASSED"
+    # Epistemic fail-safe (see detect_anomaly/apply_audit_flags/resolve_anomaly_non_blocking):
+    audit_status: Literal[
+        "PASSED", "FLAGGED", "OVERRIDDEN", "AUTO_RESOLVED_BY_SURROGATE", "ASYNC_QUARANTINED"
+    ] = "PASSED"
     audit_reasons: list[str] = Field(default_factory=list)  # why FLAGGED, if it was
+    surrogate_action: Optional[str] = None  # "PASS"/"CLAMP"/"REJECT" if the ML surrogate resolved this
+    surrogate_confidence: Optional[float] = None  # the surrogate's predicted-class probability
 
 
 class RankJustification(BaseModel):
@@ -400,7 +448,9 @@ Abstract: {abstract}
 """
 
 
-def call_gemini_with_retry(fn, *, max_retries: int = 5, base_delay: float = 2.0):
+def call_gemini_with_retry(
+    fn, *, max_retries: int = 5, base_delay: float = 2.0, max_delay: float = RATE_PACING_MAX_BACKOFF
+):
     """Call `fn()` (a zero-arg thunk making one Gemini request), retrying with
     backoff on transient errors (429 rate-limit, 503 overloaded).
 
@@ -409,7 +459,8 @@ def call_gemini_with_retry(fn, *, max_retries: int = 5, base_delay: float = 2.0)
     telemetry-extraction calls WILL hit 429s in practice — this isn't a
     hypothetical edge case, it reproduced on the very first real run during
     development. We honor the server's suggested `retryDelay` when present,
-    otherwise fall back to exponential backoff.
+    otherwise fall back to exponential backoff — both paths are capped at
+    `max_delay` (60s) so a single retry can never stall the run indefinitely.
     """
     from google.genai import errors
 
@@ -421,12 +472,12 @@ def call_gemini_with_retry(fn, *, max_retries: int = 5, base_delay: float = 2.0)
             last_exc = e
             if e.code not in (429, 503):
                 raise  # not transient — don't waste retries on a real error
-            delay = base_delay * (2**attempt)
+            delay = min(base_delay * (2**attempt), max_delay)
             details = e.details if isinstance(e.details, dict) else {}
             for d in details.get("error", {}).get("details", []):
                 if d.get("@type", "").endswith("RetryInfo") and "retryDelay" in d:
                     try:
-                        delay = float(str(d["retryDelay"]).rstrip("s")) + 0.5
+                        delay = min(float(str(d["retryDelay"]).rstrip("s")) + 0.5, max_delay)
                     except ValueError:
                         pass
                     break
@@ -701,64 +752,64 @@ def show_anomaly_card(p: ScoredPaper) -> None:
     )
 
 
-def prompt_operator_choice() -> str:
-    while True:
-        choice = console.input(
-            "\n[bold]Choose an action[/]  "
-            "[1] Apply automated likelihood penalty  "
-            "[2] Manually clamp Prior P(E)  "
-            "[3] Reject / Quarantine paper\n> "
-        ).strip()
-        if choice in {"1", "2", "3"}:
-            return choice
-        console.print("[red]Invalid choice — enter 1, 2, or 3.[/]")
+# Non-blocking tri-state resolution. This REPLACES an earlier
+# `--interactive` mode that used `console.input()` to make a human operator
+# choose per flagged paper — that blocked the entire pipeline on a single
+# terminal prompt and doesn't scale past a demo. Nothing below ever calls
+# input()/console.input(): every flagged paper is resolved automatically,
+# either by a trained ML surrogate (when confident) or by a conservative
+# fixed fail-safe bound queued for a human to review later, async.
+
+CONFIDENCE_THRESHOLD = 0.85  # surrogate must be at least this confident to auto-resolve
+FAILSAFE_PRIOR = 0.20  # conservative clamp when the surrogate can't confidently resolve
+FAILSAFE_LIKELIHOOD = 0.05  # conservative likelihood for the same case — deliberately harsh
 
 
-def prompt_manual_prior() -> float:
-    while True:
-        raw = console.input("Enter manual P(E) in [0.0, 1.0]: ").strip()
-        try:
-            value = float(raw)
-        except ValueError:
-            console.print("[red]Not a number — try again.[/]")
-            continue
-        if 0.0 <= value <= 1.0:
-            return value
-        console.print("[red]Out of range — P(E) must be between 0.0 and 1.0.[/]")
+def resolve_anomaly_non_blocking(p: ScoredPaper, conn, surrogate: Optional["graph_memory.SurrogateOperator"]) -> None:
+    """Resolve one FLAGGED paper without any blocking terminal input. Two
+    paths, chosen automatically:
 
+    1. The ML surrogate is trained AND confident enough
+       (probability >= CONFIDENCE_THRESHOLD): apply its predicted action
+       automatically, mark 'AUTO_RESOLVED_BY_SURROGATE', and record the
+       decision as Empirical Bayesian feedback (trigger_source='surrogate')
+       so future runs' priors reflect it too.
+    2. Otherwise (untrained, insufficient history, or not confident
+       enough): apply a fixed, deliberately harsh fail-safe bound
+       (P(E)=0.20, L=0.05) and queue the paper in `unresolved_audits` for a
+       human to review later — this never stalls the run.
 
-def run_hitl_review(
-    flagged: list[ScoredPaper], quarantined: set[str], conn
-) -> None:
-    """Interactive CLI review loop (agent.py --interactive). Mutates the
-    flagged ScoredPaper objects in place and records each decision as
-    Empirical Bayesian feedback in epistemic_memory.db via graph_memory."""
-    for p in flagged:
-        show_anomaly_card(p)
-        choice = prompt_operator_choice()
-        tier = graph_memory.beta_tier_for(p.telemetry.study_design, p.telemetry.sample_size)
+    Mutates `p` in place either way.
+    """
+    tier = graph_memory.beta_tier_for(p.telemetry.study_design, p.telemetry.sample_size)
+    prediction = (
+        surrogate.predict(
+            p.telemetry.sample_size, p.discrepancy_index, p.standard_error,
+            p.telemetry.is_preregistered, p.base_prior_credence,
+        )
+        if surrogate is not None
+        else None
+    )
 
-        if choice == "1":
-            p.audit_status = "PASSED"
-            graph_memory.record_feedback(conn, tier=tier, action="confirm", pmid=p.metadata.pmid)
-            console.print(f"[green]Confirmed.[/] Automated penalty retained (L={p.likelihood_penalty}).")
+    if prediction is not None and prediction[2] >= CONFIDENCE_THRESHOLD:
+        label, label_name, confidence = prediction
+        p.surrogate_action = label_name
+        p.surrogate_confidence = round(confidence, 4)
+        p.audit_status = "AUTO_RESOLVED_BY_SURROGATE"
 
-        elif choice == "2":
-            new_prior = prompt_manual_prior()
-            # is_preregistered=False here deliberately: a manual clamp is the
-            # operator's final word on P(E), not a base value for the
-            # automatic preregistration bonus to stack on top of — what they
-            # type is exactly what S_posterior gets computed from.
-            components = score_one(
-                new_prior,
-                p.telemetry.claim_hyperbole,
-                p.sample_power_weight,
-                p.velocity_norm,
-                ci_lower=p.telemetry.ci_lower,
-                ci_upper=p.telemetry.ci_upper,
-                is_preregistered=False,
+        if label == 0:  # PASS — confirm the automated handling already in place
+            graph_memory.record_feedback(
+                conn, tier=tier, action="confirm", pmid=p.metadata.pmid, trigger_source="surrogate"
             )
-            p.base_prior_credence = round(new_prior, 4)
+            log.info(f"  PMID {p.metadata.pmid}: surrogate PASS (confidence={confidence:.2f}) — automated penalty retained.")
+        elif label == 1:  # CLAMP — reset the prior to this tier's original seed baseline
+            baseline = graph_memory.SEED_BETA_PRIORS.get(tier)
+            baseline_mean = (baseline[0] / (baseline[0] + baseline[1])) if baseline else graph_memory.JEFFREYS_MEAN
+            components = score_one(
+                baseline_mean, p.telemetry.claim_hyperbole, p.sample_power_weight, p.velocity_norm,
+                ci_lower=p.telemetry.ci_lower, ci_upper=p.telemetry.ci_upper, is_preregistered=False,
+            )
+            p.base_prior_credence = round(baseline_mean, 4)
             p.preregistration_bonus = 0.0
             p.prior_credence = round(components["effective_prior_credence"], 4)
             p.rigor_baseline = round(components["rigor_baseline"], 4)
@@ -770,15 +821,50 @@ def run_hitl_review(
             )
             p.precision_penalty = round(components["precision_penalty"], 4)
             p.posterior_score = round(components["posterior_score"], 4)
-            p.audit_status = "OVERRIDDEN"
-            graph_memory.record_feedback(conn, tier=tier, action="override", manual_p=new_prior, pmid=p.metadata.pmid)
-            console.print(f"[yellow]P(E) manually clamped to {new_prior:.2f}.[/] New S_posterior = {p.posterior_score}")
+            graph_memory.record_feedback(
+                conn, tier=tier, action="override", manual_p=baseline_mean, pmid=p.metadata.pmid, trigger_source="surrogate"
+            )
+            log.info(
+                f"  PMID {p.metadata.pmid}: surrogate CLAMP (confidence={confidence:.2f}) — "
+                f"P(E) reset to tier baseline {baseline_mean:.2f}."
+            )
+        else:  # REJECT
+            graph_memory.record_feedback(
+                conn, tier=tier, action="reject", pmid=p.metadata.pmid, trigger_source="surrogate"
+            )
+            log.info(f"  PMID {p.metadata.pmid}: surrogate REJECT (confidence={confidence:.2f}) — quarantined from synthesis.")
+        return
 
-        else:  # "3"
-            quarantined.add(p.metadata.pmid)
-            p.audit_status = "OVERRIDDEN"
-            graph_memory.record_feedback(conn, tier=tier, action="reject", pmid=p.metadata.pmid)
-            console.print(f"[red]Quarantined.[/] PMID {p.metadata.pmid} excluded from arbiter synthesis.")
+    # Fall-back: conservative, fixed fail-safe bound + async queue for a human.
+    components = score_one(
+        FAILSAFE_PRIOR, p.telemetry.claim_hyperbole, p.sample_power_weight, p.velocity_norm,
+        is_preregistered=False,
+    )
+    p.base_prior_credence = FAILSAFE_PRIOR
+    p.preregistration_bonus = 0.0
+    p.prior_credence = FAILSAFE_PRIOR
+    p.likelihood_penalty = FAILSAFE_LIKELIHOOD
+    p.rigor_baseline = round(components["rigor_baseline"], 4)
+    p.precision_penalty = round(components["precision_penalty"], 4)
+    p.posterior_score = round(
+        clip01((FAILSAFE_PRIOR * FAILSAFE_LIKELIHOOD * components["precision_penalty"]) * W_PRIOR
+               + p.velocity_norm * W_VELOCITY),
+        4,
+    )
+    p.audit_status = "ASYNC_QUARANTINED"
+    graph_memory.insert_unresolved_audit(
+        conn, pmid=p.metadata.pmid,
+        reason="; ".join(p.audit_reasons) or "flagged for audit",
+        telemetry_json=json.dumps(p.telemetry.model_dump()),
+    )
+    if surrogate is None or not surrogate.is_trained:
+        reason_note = f"surrogate untrained ({0 if surrogate is None else surrogate.n_training_rows}/{graph_memory.SurrogateOperator.MIN_TRAINING_ROWS} decisions)"
+    else:
+        reason_note = f"surrogate confidence too low ({prediction[2]:.2f} < {CONFIDENCE_THRESHOLD})" if prediction else "surrogate returned no prediction"
+    log.warning(
+        f"  PMID {p.metadata.pmid}: {reason_note} — applied conservative fail-safe bound "
+        f"(P(E)={FAILSAFE_PRIOR}, L={FAILSAFE_LIKELIHOOD}), queued in unresolved_audits for async review."
+    )
 
 
 # --------------------------------------------------------------------------
@@ -906,11 +992,17 @@ def counterfactual_arbiter(client, model: str, top: list[dict], scenario: str) -
 # --------------------------------------------------------------------------
 
 
-_AUDIT_STYLE = {"PASSED": "dim", "FLAGGED": "bold red", "OVERRIDDEN": "bold yellow"}
+_AUDIT_STYLE = {
+    "PASSED": "dim",
+    "FLAGGED": "bold red",
+    "OVERRIDDEN": "bold yellow",
+    "AUTO_RESOLVED_BY_SURROGATE": "bold cyan",
+    "ASYNC_QUARANTINED": "bold magenta",
+}
 
 
-def print_ranking_table(scored: list[ScoredPaper], quarantined: Optional[set[str]] = None) -> None:
-    quarantined = quarantined or set()
+def print_ranking_table(scored: list[ScoredPaper], excluded: Optional[set[str]] = None) -> None:
+    excluded = excluded or set()
     table = Table(title="Bayesian Posterior Ranking (all relevant papers)")
     table.add_column("Rank", justify="right")
     table.add_column("PMID")
@@ -929,7 +1021,11 @@ def print_ranking_table(scored: list[ScoredPaper], quarantined: Optional[set[str
 
     for i, p in enumerate(scored, start=1):
         style = _AUDIT_STYLE.get(p.audit_status, "")
-        audit_label = p.audit_status + (" [quarantined]" if p.metadata.pmid in quarantined else "")
+        audit_label = p.audit_status
+        if p.surrogate_action:
+            audit_label += f" ({p.surrogate_action}, conf={p.surrogate_confidence:.2f})"
+        if p.metadata.pmid in excluded:
+            audit_label += " [excluded from arbiter]"
         flags = []
         if p.is_ood_design:
             flags.append("[magenta]OOD[/]")
@@ -983,7 +1079,15 @@ def print_top3_defense(top: list[ScoredPaper], verdict: Optional[ArbiterVerdict]
 def main() -> None:
     parser = argparse.ArgumentParser(description="Epistemic Filtering Agent")
     parser.add_argument("--query", default=DEFAULT_QUERY, help="PubMed search query")
-    parser.add_argument("--max-results", type=int, default=DEFAULT_MAX_RESULTS)
+    parser.add_argument(
+        "--max-results", "--limit", "--batch-size", dest="max_results",
+        type=_batch_size, default=DEFAULT_MAX_RESULTS,
+        help=f"Number of PubMed results to fetch, {BATCH_SIZE_MIN}-{BATCH_SIZE_MAX} "
+        "(aliases: --limit, --batch-size — all three set the same value). Batches larger "
+        f"than {RATE_PACING_BATCH_THRESHOLD} trigger adaptive rate pacing "
+        f"(>= {RATE_PACING_MIN_INTERVAL}s between extraction calls) to protect the free "
+        "tier's ~15 RPM ceiling.",
+    )
     parser.add_argument(
         "--model",
         default="gemini-flash-lite-latest",
@@ -1003,11 +1107,6 @@ def main() -> None:
     parser.add_argument(
         "--db", default=graph_memory.DB_PATH_DEFAULT,
         help="Path to the persistent epistemic knowledge graph / Beta-prior store (SQLite)",
-    )
-    parser.add_argument(
-        "--interactive", action="store_true",
-        help="Halt on each FLAGGED_FOR_AUDIT anomaly and prompt an operator for a decision, "
-        "instead of just logging a warning and letting the automated penalty stand.",
     )
     args = parser.parse_args()
 
@@ -1034,9 +1133,17 @@ def main() -> None:
 
     # ---- Module 2 (LLM Step 1) + Reasoning Step 1: relevance filter ----
     log.info(f"[EXTRACTING TELEMETRY] Sending {len(papers)} abstracts to Gemini ({args.model})...")
+    pacer = RatePacer() if len(papers) > RATE_PACING_BATCH_THRESHOLD else None
+    if pacer:
+        log.info(
+            f"[EXTRACTING TELEMETRY] Batch size {len(papers)} > {RATE_PACING_BATCH_THRESHOLD}: "
+            f"pacing calls >= {RATE_PACING_MIN_INTERVAL}s apart to protect the free-tier RPM ceiling."
+        )
     relevant: list[tuple[PaperMetadata, PaperTelemetry]] = []
     dropped_irrelevant = 0
     for paper in papers:
+        if pacer:
+            pacer.wait()
         tele = extract_telemetry(client, args.model, paper)
         if tele is None:
             continue
@@ -1087,29 +1194,44 @@ def main() -> None:
     )
     scored = score_papers(relevant, prior_lookup=current_priors)
 
-    # ---- Module 3.5: Epistemic fail-safe & HITL anomaly gate ----
+    # ---- Module 3.5: Epistemic fail-safe — non-blocking tri-state resolution ----
     apply_audit_flags(scored)
     flagged = [p for p in scored if p.audit_status == "FLAGGED"]
-    quarantined: set[str] = set()
+    auto_resolved_count = 0
+    async_quarantined_count = 0
     if flagged:
         log.warning(f"[FAIL-SAFE] {len(flagged)} paper(s) flagged for epistemic audit.")
-        for p in flagged:
-            log.warning(f"  PMID {p.metadata.pmid}: {'; '.join(p.audit_reasons)}")
-        if args.interactive:
-            run_hitl_review(flagged, quarantined, conn)
-            scored.sort(key=lambda p: p.posterior_score, reverse=True)  # HITL may have changed scores
+        surrogate = graph_memory.SurrogateOperator(conn)
+        if surrogate.is_trained:
+            log.info(f"[FAIL-SAFE] ML surrogate operator trained on {surrogate.n_training_rows} historical decisions.")
         else:
             log.info(
-                "[FAIL-SAFE] Non-interactive mode: automated likelihood penalty already applied "
-                "to the flagged paper(s) above. Re-run with --interactive to review manually."
+                f"[FAIL-SAFE] ML surrogate operator not yet trained "
+                f"({surrogate.n_training_rows}/{graph_memory.SurrogateOperator.MIN_TRAINING_ROWS} decisions available) "
+                "— falling back to the fixed fail-safe bound for every flagged paper this run."
             )
+        for p in flagged:
+            show_anomaly_card(p)
+            resolve_anomaly_non_blocking(p, conn, surrogate)
+            if p.audit_status == "AUTO_RESOLVED_BY_SURROGATE":
+                auto_resolved_count += 1
+            elif p.audit_status == "ASYNC_QUARANTINED":
+                async_quarantined_count += 1
+        scored.sort(key=lambda p: p.posterior_score, reverse=True)  # resolution may have changed scores
 
-    print_ranking_table(scored, quarantined=quarantined)
+    # Excluded from the arbiter (not "quarantined" in the old blocking sense —
+    # this now covers both a surrogate REJECT verdict and an async-queued paper):
+    excluded = {
+        p.metadata.pmid for p in scored
+        if p.audit_status == "ASYNC_QUARANTINED" or p.surrogate_action == "REJECT"
+    }
 
-    candidates = [p for p in scored if p.metadata.pmid not in quarantined]
+    print_ranking_table(scored, excluded=excluded)
+
+    candidates = [p for p in scored if p.metadata.pmid not in excluded]
     top3 = candidates[:3]
-    if quarantined:
-        log.info(f"[FAIL-SAFE] {len(quarantined)} paper(s) quarantined from arbiter synthesis: {sorted(quarantined)}")
+    if excluded:
+        log.info(f"[FAIL-SAFE] {len(excluded)} paper(s) excluded from arbiter synthesis: {sorted(excluded)}")
 
     # ---- Module 4 (LLM Step 2) ----
     log.info(f"[ARBITRATING] Asking Gemini to defend the top {len(top3)} ranking with specific telemetry...")
@@ -1135,6 +1257,8 @@ def main() -> None:
             audit_status=p.audit_status,
             url=p.metadata.url,
             doi=p.metadata.doi,
+            standard_error=p.standard_error,
+            is_preregistered=p.telemetry.is_preregistered,
         )
 
     # Contradiction edges are tagged sentiment="REFUTING" unconditionally —
@@ -1179,7 +1303,9 @@ def main() -> None:
         "papers_relevant": len(relevant),
         "papers_dropped_irrelevant": dropped_irrelevant,
         "papers_flagged_for_audit": len(flagged),
-        "papers_quarantined": sorted(quarantined),
+        "papers_auto_resolved_by_surrogate": auto_resolved_count,
+        "papers_async_quarantined": async_quarantined_count,
+        "papers_excluded_from_arbiter": sorted(excluded),
         "full_ranking": [p.model_dump() for p in scored],
         "top3": [p.model_dump() for p in top3],
         "arbiter_verdict": verdict.model_dump() if verdict else None,

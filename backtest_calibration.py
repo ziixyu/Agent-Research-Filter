@@ -8,9 +8,9 @@ An adversarial LLM-as-a-Judge "red team" critic re-evaluates already-scored
 papers against three methodological stress tests (sample power, selective
 reporting risk, endpoint validity) and automatically feeds ROBUST/VULNERABLE
 verdicts into graph_memory.record_feedback() to move each design tier's
-Beta(alpha, beta) — the same mechanism a human operator drives via
-`agent.py --interactive` or the dashboard's HITL panel, just automated and
-deliberately adversarial instead of manual.
+Beta(alpha, beta) — the same mechanism agent.py's non-blocking surrogate
+fail-safe and the dashboard's manual override both drive, just automated and
+deliberately adversarial instead of ML-predicted or manual.
 
 This is a CALIBRATION TOOL, run separately and deliberately from the main
 pipeline (`python agent.py`) — it is NOT invoked automatically by a normal
@@ -148,7 +148,7 @@ def apply_verdict(conn, tier: str, verdict: CalibrationVerdict, pmid: str) -> tu
     distribution. Kept as its own thin function (rather than inlined) so
     it's independently unit-testable without a live Gemini call."""
     action = "confirm" if verdict.verdict == "ROBUST" else "reject"
-    return graph_memory.record_feedback(conn, tier=tier, action=action, pmid=pmid)
+    return graph_memory.record_feedback(conn, tier=tier, action=action, pmid=pmid, trigger_source="calibration_engine")
 
 
 def run_calibration_pass(client, model: str, conn, papers: list[dict]) -> dict:

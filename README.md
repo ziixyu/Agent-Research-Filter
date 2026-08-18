@@ -23,30 +23,32 @@ paper X above paper Y.
 ## Pipeline
 
 ```
-[FETCH]      Bio.Entrez -> PubMed              real metadata + abstracts, 10 papers
+[FETCH]      Bio.Entrez -> PubMed              real metadata + abstracts, paced for batch size
 [EXTRACT]    Gemini (structured JSON)          LLM Step 1: telemetry only, no verdicts
 [FILTER]     Python                            Reasoning Step 1: relevance gate
 [SCORE]      Deterministic Bayesian update     Reasoning Step 2: the judgment call
-[GATE]       Python fail-safe + optional HITL  flags anomalies, can halt for a human
+[GATE]       Python fail-safe (non-blocking)   ML surrogate resolves, or async-queues, anomalies
 [ARBITER]    Gemini (structured JSON)          LLM Step 2: defends the ranking it was given
 [MEMORY]     SQLite + networkx                 persists the graph and learns from feedback
 ```
 
 Four modules beyond the core pipeline:
 
-- **`graph_memory.py`** — a persistent knowledge graph (SQLite + `networkx.DiGraph`) and
-  Empirical Bayesian active learning over the priors themselves (see "Active learning" below),
-  including out-of-distribution study designs (see "Out-of-distribution designs" below).
-- **The fail-safe/HITL gate in `agent.py`** — `python agent.py --interactive` halts on any
-  paper that trips a severity threshold and asks a human operator to confirm, override, or
-  quarantine it (see "Fail-safe & HITL gate" below).
+- **`graph_memory.py`** — a persistent knowledge graph (SQLite + `networkx.DiGraph`), Empirical
+  Bayesian active learning over the priors (see "Active learning" below), out-of-distribution
+  study designs (see "Out-of-distribution designs" below), and an ML `SurrogateOperator` that
+  learns to predict HITL-style decisions from telemetry (see "ML surrogate" below).
+- **The non-blocking fail-safe in `agent.py`** — every flagged paper is resolved automatically:
+  either the trained surrogate predicts confidently, or a fixed conservative bound applies and
+  the paper is queued for async human review. Nothing in this pipeline calls `input()` anymore
+  (see "Non-blocking tri-state fail-safe" below).
 - **`backtest_calibration.py`** — `python backtest_calibration.py --iterations N` runs an
   adversarial LLM "red team" critic over already-scored papers and automatically feeds its
-  verdicts into the same Beta-update mechanism a human HITL decision uses (see "Autonomous
-  calibration engine" below).
-- **`ui.py`** — `streamlit run ui.py`, a live dashboard over a completed run: an instantly
-  recomputable ranking table, the knowledge graph rendered with physics, a HITL override panel,
-  a paper inspector with live PubMed/DOI links, and a counterfactual arbiter console (see
+  verdicts into the same Beta-update mechanism the surrogate/manual overrides use (see
+  "Autonomous calibration engine" below).
+- **`ui.py`** — `streamlit run ui.py`, a two-tab live dashboard: Tab 1 is the ranking table,
+  physics-rendered signed knowledge graph, and the Async Audit Queue / Surrogate Inspector; Tab 2
+  is a per-tier convergence chart plus a console that runs the calibration engine live (see
   "Dashboard" below).
 
 ### Reasoning Step 1 — the relevance gate
@@ -215,6 +217,20 @@ LLM with an explicit instruction: **explain this ranking, don't re-decide it.** 
 prior P(E), the likelihood/absurdity penalty, or citation velocity) actually separated rank 1
 from rank 2. This is the part of the output you read out loud in the demo.
 
+## Configurable batch sizing & adaptive rate pacing (`agent.py`)
+
+`--max-results` (aliased as `--limit` and `--batch-size` — all three set the same value) is
+validated to `[5, 50]` by a custom argparse type (`_batch_size()`); anything outside that range
+fails fast with a clear CLI error rather than silently clamping or crashing mid-run.
+
+Batches larger than `RATE_PACING_BATCH_THRESHOLD` (10) trigger a proactive `RatePacer`: a
+minimum `4.2`s gap enforced between successive Gemini extraction calls, to stay under the free
+tier's ~15 RPM ceiling *before* hitting it, rather than only reacting to 429s after the fact.
+This is complementary to, not a replacement for, `call_gemini_with_retry()`'s existing reactive
+backoff — that backoff now also has an explicit `max_delay=60.0` ceiling (previously
+unbounded exponential growth), so a single retry can never stall the run past a minute
+regardless of how many attempts the server's `retryDelay` or the doubling schedule implies.
+
 ## Active learning: priors that update from feedback (`graph_memory.py`)
 
 Everything above describes priors as fixed numbers. They aren't, anymore. Each Beta tier's
@@ -293,13 +309,27 @@ single pass. Point `--db` at a scratch copy if you want to experiment without to
 learned priors; the mapping logic itself (`apply_verdict`) is unit-tested independently of any
 live Gemini call.
 
-## Fail-safe & HITL anomaly gate (`agent.py`)
+### Calibration persistence & convergence (`graph_memory.py`)
+
+Every single call to `record_feedback()` — regardless of whether the trigger was a human, the
+ML surrogate, or the calibration engine above — and every *first-time* call to
+`register_novel_tier()` appends one row to a `calibration_history` table:
+`(timestamp, tier, alpha, beta, expected_credence, iteration, trigger_source)`. `iteration` is
+just that tier's own update count so far (`COUNT(*) WHERE tier=?`) — simple, and exactly what a
+convergence line chart wants as its x-axis, so a tier that's received more feedback naturally
+has more points than a quiet one. `get_calibration_history_df()` returns the whole table as a
+pandas DataFrame, ordered `(tier, iteration)`, which `ui.py`'s Tab 2 pivots into wide format
+(`index=iteration, columns=tier, values=expected_credence`) for `st.line_chart` — a genuine live
+run of this (see "Edge cases" below) produced 10 real snapshots across 3 tiers from a single
+calibration pass, rendering as three real convergence curves.
+
+## Fail-safe: ML surrogate + non-blocking tri-state resolution (`agent.py`, `graph_memory.py`)
 
 This is a **separate, coarser gate** from the smooth likelihood penalty in Reasoning Step 2.
 The likelihood penalty discounts credence continuously for *any* paper whose claim mildly
 outruns its tier (`DISCREPANCY_THRESHOLD=0.5`) — silent, automatic, no human involved. The
-anomaly gate fires on a much higher bar and exists to put a *specific* paper in front of a
-human, not just discount it:
+anomaly gate fires on a much higher bar and exists to put a *specific* paper in front of
+scrutiny, not just discount it:
 
 1. **Discrepancy Index D ≥ 2.0** — the claim doesn't just mildly overreach, it's badly out of
    proportion to what the design tier can support.
@@ -307,35 +337,50 @@ human, not just discount it:
    meta-analysis synthesizes other work rather than running an intervention itself; cohort,
    observational, in-vitro, and review designs aren't controlled interventions either).
 
-**Batch mode (default):** a flagged paper gets `audit_status="FLAGGED"`, a warning is logged
-with the specific trigger reason(s), and the run continues — the automated likelihood penalty
-was already applied as part of Reasoning Step 2's normal math, so nothing extra needs to happen
-for the score to already reflect it.
+An earlier version of this gate had an `--interactive` mode that used `console.input()` to ask
+a human operator to choose per flagged paper — that blocked the entire pipeline on a single
+terminal prompt and doesn't scale past a demo. **It has been removed entirely.** Nothing in
+`agent.py` calls `input()`/`console.input()` anymore. Every flagged paper is resolved
+automatically, one of two ways:
 
-**Interactive mode (`python agent.py --interactive`):** execution halts on each flagged paper,
-prints a warning card (PMID, N, claim strength vs. the design's justified ceiling, current
-P(E), D, L), and prompts:
+**1. The ML surrogate is trained and confident.** `graph_memory.SurrogateOperator` is a
+`LogisticRegression` trained on the accumulated history in `feedback_log` joined against
+`nodes` — once at least `MIN_TRAINING_ROWS=10` past decisions exist. Its feature vector is
+exactly the 5 dimensions specified: `[log10(N+1), Discrepancy_D, Standard_Error_SE,
+is_preregistered, study_design_prior]`, and its target label is the 3 actions
+`record_feedback()` already accepts (0=PASS/"confirm", 1=CLAMP/"override", 2=REJECT/"reject") —
+so training labels come straight from history with no separate mapping table to keep in sync.
+If the predicted class's probability is `>= CONFIDENCE_THRESHOLD (0.85)`, that action is applied
+automatically, `audit_status` becomes `AUTO_RESOLVED_BY_SURROGATE`, and the decision is recorded
+as feedback (`trigger_source='surrogate'`) so it also shapes future runs' priors. CLAMP resets
+the paper's prior to its tier's *original seed baseline* (not the current learned mean) — a
+normalizing action, not a punitive one.
 
-```
-[1] Apply automated likelihood penalty   -> confirm; audit_status -> PASSED; Beta: alpha += 1
-[2] Manually clamp Prior P(E)            -> audit_status -> OVERRIDDEN; Beta nudged toward p
-[3] Reject / Quarantine paper            -> excluded from top3/arbiter; Beta: beta += 1
-```
+**2. Otherwise (untrained, insufficient history, or not confident enough):** a fixed,
+deliberately harsh fail-safe bound applies — `P(E)=0.20`, `L(Absurdity)=0.05` — and the paper is
+inserted into a new `unresolved_audits` table (`id, pmid, timestamp, reason, telemetry_json`)
+with `audit_status=ASYNC_QUARANTINED`. This **never stalls the run**: insertion is one SQL
+statement, execution continues immediately. A human reviews the queue later, on their own time,
+via `ui.py`'s Async Quarantine Queue accordion (one-click "confirm & release").
 
-All three paths were exercised by hand against real anomaly data during development (piped
-stdin, not just unit-tested) — see the commit history for the transcripts. Note that
-`audit_status` only has 3 values (`PASSED`/`FLAGGED`/`OVERRIDDEN`, matching the given schema);
-quarantine and manual-override both persist as `OVERRIDDEN` on the node, with the specific
-action (`confirm`/`override`/`reject`) recoverable from `feedback_log` for a finer-grained
-audit trail than the node schema alone provides.
+Both a surrogate `REJECT` verdict and any `ASYNC_QUARANTINED` paper are excluded from the top-3
+sent to the arbiter — a real regression test
+(`test_resolve_anomaly_auto_resolves_when_surrogate_confident`) exercises this against
+synthetic, deliberately-separable training data (a clean RCT/preregistered cluster vs. a
+tiny/overclaiming Retrospective cluster) and checks the exact predicted label, not just "some
+label"; a companion regression test (`test_surrogate_predict_proba_label_matches_classes_order`)
+locks in a real bug caught during development — see "Edge cases" below.
 
 ## Persistent knowledge graph (`graph_memory.py`)
 
 SQLite (`epistemic_memory.db`) is the durable store; `networkx.DiGraph` is an in-memory view
 built from it for graph algorithms and the dashboard. Every scored paper becomes a node
 (pmid, title, study_design, sample_size, prior_credence, discrepancy_index,
-likelihood_penalty, posterior_score, audit_status, **url, doi**). Two kinds of edges, both
-**signed** with a sentiment tag (`SUPPORTING` / `MENTION` / `REFUTING`), not just present/absent:
+likelihood_penalty, posterior_score, audit_status, **url, doi, standard_error,
+is_preregistered**). The last two exist specifically to feed the `SurrogateOperator`'s feature
+vector without a second query path — training data is a straight join of `feedback_log` (the
+label) against `nodes` (the features) on `pmid`. Two kinds of edges, both **signed** with a
+sentiment tag (`SUPPORTING` / `MENTION` / `REFUTING`), not just present/absent:
 
 - **Citation edges — real data**, not mocked. `fetch_citation_edges_from_pubmed()` calls
   `Bio.Entrez.elink` (`pubmed_pubmed_refs`) and keeps only links where *both* papers are in our
@@ -358,13 +403,15 @@ likelihood_penalty, posterior_score, audit_status, **url, doi**). Two kinds of e
   repo already documents real free-tier quota pain) rather than accurate; it's meant to surface
   *candidates* for a human to actually read, not to assert a contradiction is real.
 
-`nodes.url`/`nodes.doi` and `edges.sentiment` were added to an already-committed schema, not
-designed in from scratch — `graph_memory.init_db()` runs a small migration
-(`_ensure_column()`, `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`) on every open, so the
-already-committed `epistemic_memory.db` from an earlier version of this repo upgrades in place
-instead of needing to be deleted and regenerated.
+`nodes.url`/`nodes.doi`/`nodes.standard_error`/`nodes.is_preregistered` and `edges.sentiment`
+were all added to an already-committed schema, not designed in from scratch —
+`graph_memory.init_db()` runs a small migration (`_ensure_column()`, `PRAGMA table_info` +
+`ALTER TABLE ADD COLUMN`) on every open, so an already-committed `epistemic_memory.db` from an
+earlier version of this repo upgrades in place instead of needing to be deleted and
+regenerated. Two brand-new tables this pass — `calibration_history` and `unresolved_audits` —
+use plain `CREATE TABLE IF NOT EXISTS` instead, since a fresh table needs no column migration.
 
-## Dashboard (`ui.py`)
+## Dashboard (`ui.py`) — two tabs
 
 ```bash
 streamlit run ui.py
@@ -372,37 +419,55 @@ streamlit run ui.py
 
 Reads a completed run's JSON output plus `epistemic_memory.db`. It never re-calls PubMed.
 
+### Tab 1 — Epistemic Matrix & Knowledge Graph
+
 - **Dynamic Ranking Matrix** — Methodology-weight (w_M) and Velocity-weight (w_V=1-w_M) sliders
-  recompute every paper's `S_posterior` live, by calling the *exact same* `agent.score_one()`
-  function the CLI pipeline uses (not a re-implementation that could drift out of sync) against
-  the already-extracted `prior_credence`/`likelihood_penalty`/`velocity_norm` — no new
-  extraction, no new Gemini calls.
-  extraction, no new Gemini calls. The PMID column renders as a clickable link to PubMed
-  (`st.column_config.LinkColumn`, with a regex `display_text` so the cell shows the bare PMID
-  rather than the full URL); 🆕/✅ badge columns flag out-of-distribution designs and
-  preregistered trials at a glance.
-- **Physics-based graph** — rendered via embedded pyvis HTML (`cdn_resources="in_line"` — see
-  the edge case below for why that flag matters). Node size ∝ log10(N); node fill color
-  interpolates green (high `S_posterior`) to red (low/penalized); node **border** color flags
-  out-of-distribution designs (violet) and preregistered trials (green); hovering any node shows
-  a clickable PubMed link plus full telemetry in the tooltip. Citation edges are colored by
-  sentiment (green=SUPPORTING, gray=MENTION, red dashed=REFUTING); contradiction edges always
-  render bold red dashed.
+  re-sort every paper's `S_posterior` **entirely in client-side memory**, by calling the *exact
+  same* `agent.score_one()` function the CLI pipeline uses (not a re-implementation that could
+  drift out of sync) against the already-extracted `prior_credence`/`likelihood_penalty`/
+  `velocity_norm` — no new extraction, no new Gemini calls. PMID and DOI columns render as
+  clickable links (`st.column_config.LinkColumn`, with a regex `display_text` so the cell shows
+  the bare PMID/DOI rather than the full URL); 🆕/✅ flag out-of-distribution designs and
+  preregistered trials.
 - **Paper Inspector** — pick any paper from a dropdown to see its full metadata, a "View on
   PubMed" and "View DOI" link button pair (`st.link_button`), the reported 95% CI/p-value if
   extracted, and the base-prior → bonus → effective-prior → posterior breakdown for that
   specific paper.
-- **HITL Override Panel** — every `FLAGGED` paper gets a card (with its own "View on PubMed"
-  button) with a live-preview P(E) slider (shows what the posterior *would* become before you
-  commit) and Apply/Quarantine buttons that write straight through
-  `graph_memory.record_feedback()` into `epistemic_memory.db` — the same store
-  `agent.py --interactive` writes to, so a decision made in the dashboard is loaded by the next
-  CLI run and vice versa.
+- **Physics-stabilized signed graph** — rendered via embedded pyvis HTML (`cdn_resources=
+  "in_line"` — see the edge case below for why that flag matters), physics solver
+  `forceAtlas2Based` with central-gravity damping (tuned specifically so a 30-50 node batch
+  doesn't collapse into an overlapping cluster the way `barnesHut` alone tends to at that scale).
+  Node size ∝ `log10(N+1)`, clamped to `[10, 55]px` so one N=100,000 outlier can't swamp the
+  rest visually; node fill color interpolates green (high `S_posterior`) to red
+  (low/penalized); node **border** flags out-of-distribution designs (violet) and preregistered
+  trials (green). Edges are signed per the exact spec: `SUPPORTING` solid green `#2ecc71`
+  width 2, `MENTION` slate gray `#95a5a6` width 1, `REFUTING` bold red dashed `#e74c3c` width 3
+  (a contradiction edge is unconditionally `REFUTING`). Hovering any node exposes its clickable
+  PubMed link plus full telemetry in the tooltip.
+- **Async Audit Queue & Surrogate Inspector** — replaces the old blocking HITL panel. Cards for
+  every `AUTO_RESOLVED_BY_SURROGATE` paper show the predicted action and confidence score; an
+  "Asynchronous Quarantine Queue" accordion lists every `unresolved_audits` row with a one-click
+  "Resolve (confirm & release)" button that records feedback, flips `audit_status` to
+  `OVERRIDDEN`, and clears the queue entry.
 - **Arbiter + counterfactual console** — renders the persisted arbiter justification, plus a
   free-text box that calls Gemini live (`agent.counterfactual_arbiter()`, reusing
   `call_gemini_with_retry`) with a user-supplied hypothetical ("re-evaluate if liver stiffness
   endpoints are excluded") and the same top-3 telemetry, explicitly instructed to say so if the
   scenario *wouldn't* plausibly change the ranking rather than manufacturing a change.
+
+### Tab 2 — Empirical Prior Convergence & Calibration
+
+- **Convergence chart** — `graph_memory.get_calibration_history_df()`, pivoted wide
+  (`index=iteration, columns=tier`) and forward-filled so a quiet tier draws a flat line instead
+  of appearing to "stop", rendered via `st.line_chart`. Empty-state message when no feedback has
+  been recorded yet, rather than an empty/broken chart.
+- **Live Calibration Console** — a 1-10 iteration slider and an "Execute Autonomous Adversarial
+  Calibration" button that imports `backtest_calibration.py` directly and calls its
+  `run_calibration_pass()` in a loop against the loaded run's `full_ranking`, live, streaming a
+  running log of each verdict and redrawing the convergence chart when done (`st.rerun()`).
+  Verified live during development: one real click ran the adversarial judge across all 10
+  papers, produced 10 real `calibration_history` snapshots across 3 tiers, and rendered 3 real
+  convergence curves — see "Edge cases" below for why that state isn't what's committed.
 
 ## Edge cases I hit for real, not hypothetically
 
@@ -463,7 +528,38 @@ Streamlit session don't release the file just because the browser tab closed. Fi
 was `taskkill` on the stray process; the durable takeaway (and why `graph_memory.init_db()`'s
 migration path matters — see "Persistent knowledge graph" above) is that this repo is built to
 tolerate *upgrading* an existing `epistemic_memory.db` in place rather than assuming you can
-always delete and recreate it on demand.
+always delete and recreate it on demand. It recurred verbatim during this pass and was fixed
+the same way — worth building a real "is anything holding this file open" check into a future
+`Makefile`/dev script rather than re-discovering it by hand each time.
+
+### 5. `predict_proba()`'s columns don't reliably mean `[PASS, CLAMP, REJECT]`
+
+While building `SurrogateOperator.predict()`, the first version did
+`label = int(proba.argmax())` — treating the argmax *index* as the label directly. That's wrong
+whenever the training data so far doesn't contain all 3 action types: with only `confirm`(0) and
+`reject`(2) seen, `LogisticRegression.classes_` becomes `[0, 2]` (only 2 columns), so index `1`
+of `predict_proba()`'s output means label `2`, not label `1`. Early in training — exactly when a
+real deployment is most likely to have an incomplete action mix — this would have silently
+mispredicted CLAMP instead of REJECT. Fixed by mapping the argmax index back through
+`model.classes_` explicitly; `test_surrogate_predict_proba_label_matches_classes_order` locks
+this in with a training set that deliberately never sees a CLAMP example, asserting the
+predicted label is always a real observed one.
+
+### 6. A synthetic test's own prior mismatch silently understated surrogate confidence
+
+Debugging a low-confidence surrogate prediction (0.51-0.79 instead of the expected >0.9) on
+clean, hand-separated training data turned out to be a **test-harness bug, not a code bug**: the
+test constructed a query paper via the normal `score_papers()` pipeline using the *default*
+prior (the tier's static seed mean), while training rows had been seeded with a
+*different, drifted* prior value for the same tier — so the "prior" feature for the query paper
+sat between the two training clusters instead of matching either, and the model was correctly
+uncertain given genuinely ambiguous input. Verified by reproducing the exact same features
+directly against bare `sklearn.LogisticRegression` (0.97 confidence on the clean case) before
+concluding the model itself was fine. The fixed test
+(`test_resolve_anomaly_auto_resolves_when_surrogate_confident`) now explicitly passes a matching
+`prior_lookup` so the query paper's features actually resemble what was trained on — a small but
+real lesson about synthetic-data test design: a feature vector's parts have to agree with each
+other, not just individually look "clearly PASS-like" or "clearly REJECT-like".
 
 ## What I'd flag as a known limitation (and defend anyway)
 
@@ -476,18 +572,42 @@ always delete and recreate it on demand.
   [NIH iCite API](https://icite.od.nih.gov/api) (`GET /api/pubs?pmids=...`) is a ~20-line
   change to `fetch_pubmed()` and nothing downstream needs to change, since the posterior update
   only cares about the final `citations` integer.
-- **The fail-safe/HITL gate never fired on real PubMed data in this pass.** Published,
+- **The fail-safe anomaly gate never fired on real PubMed data in any live run.** Published,
   peer-reviewed clinical literature on this topic is, unsurprisingly, generally cautious — no
   paper in any live run made a claim absurd enough (D≥2.0) or ran an interventional trial small
-  enough (N<30) to trip the gate. That's a property of the corpus, not evidence the gate doesn't
-  work: all 3 HITL decision paths (confirm/override/quarantine) were exercised by hand against
-  synthetic anomaly data with real piped stdin, and 5 of the 43 automated tests specifically
-  target `detect_anomaly()`/`apply_audit_flags()`. **With more time**, I'd want at least one
-  intentionally-adversarial query in the demo corpus (a preprint server or a known-retracted
-  paper) so the gate fires on genuinely real data, not just synthetic test fixtures. (The
-  adversarial calibration engine, `backtest_calibration.py`, DID fire real VULNERABLE verdicts
-  against real data in a live run — see "Autonomous calibration engine" above — but that's a
-  separate mechanism from this anomaly gate.)
+  enough (N<30) to trip the gate, so `AUTO_RESOLVED_BY_SURROGATE`/`ASYNC_QUARANTINED` don't
+  appear in the committed `sample_run_output.json`. That's a property of the corpus, not
+  evidence the mechanism doesn't work: both the surrogate-confident path and the
+  fixed-fail-safe-fallback path were exercised directly (not just unit-tested) against synthetic
+  anomaly data, and the automated suite has dedicated coverage for the anomaly gate, the
+  surrogate (training, feature extraction, confidence routing), and the non-blocking resolution
+  itself. **With more time**, I'd want at least one intentionally-adversarial query in the demo
+  corpus (a preprint server or a known-retracted paper) so the gate fires on genuinely real
+  data. (The adversarial calibration engine, `backtest_calibration.py`, DID fire real VULNERABLE
+  verdicts against real data in a live run — see "Autonomous calibration engine" above — but
+  that's a separate mechanism that judges papers directly, not through this anomaly gate.)
+- **The ML surrogate has no train/holdout split, cross-validation, or overfitting guard.**
+  `SurrogateOperator._fit()` trains on 100% of `feedback_log ⋈ nodes` history and immediately
+  predicts on new data — with `MIN_TRAINING_ROWS=10` as the only floor, an early model can be
+  confidently wrong on a small, non-representative history (this is exactly why the
+  `CONFIDENCE_THRESHOLD=0.85` bar and the conservative fixed fail-safe below it exist: a
+  low-data model is expected to often fall back rather than act). **With more time:** a rolling
+  holdout accuracy check, and refusing to trust the model at all until holdout accuracy clears
+  some bar (not just row count), would be a meaningfully stronger guarantee than "10 rows and a
+  confidence threshold."
+- **`FAILSAFE_PRIOR=0.20` and `FAILSAFE_LIKELIHOOD=0.05` are fixed constants, not derived from
+  anything in the data** — chosen to be deliberately harsh (a paper that trips the gate and
+  can't be confidently resolved should rank low, not "average") but not empirically tuned.
+  **With more time:** these could themselves be learned (e.g. the tier's own low-percentile
+  historical credence) rather than hand-picked.
+- **The dashboard's Live Calibration Console writes directly to the same `epistemic_memory.db`
+  a real `agent.py` run would use next**, with no confirmation step or preview before committing
+  — clicking "Execute Autonomous Adversarial Calibration" immediately shifts real priors. This
+  is why the committed `epistemic_memory.db` reflects a plain `agent.py` run, not the
+  calibration-console click verified live during development (see "Edge cases" above) — that
+  would have left the committed DB's priors inconsistent with the committed
+  `sample_run_output.json`'s scores. **With more time:** the console should default to a scratch
+  DB path (mirroring `backtest_calibration.py --db`'s own advice) rather than the live one.
 - **`p_value` is extracted but never used in scoring.** The telemetry schema captures it because
   the spec asked for it, and it's visible in the Paper Inspector and `run_output.json` for a
   human to read, but only the CI-derived Standard Error feeds the Precision Penalty. A p-value
@@ -556,15 +676,17 @@ python agent.py
 Optional flags:
 
 ```bash
-python agent.py --query "your own PubMed search" --max-results 10 --model gemini-flash-lite-latest --seed 42 --db epistemic_memory.db
-python agent.py --interactive     # halt on each FLAGGED anomaly and prompt an operator
+python agent.py --query "your own PubMed search" --limit 10 --model gemini-flash-lite-latest --seed 42 --db epistemic_memory.db
+python agent.py --batch-size 30   # >10 auto-paces Gemini calls (>=4.2s apart) for the free tier
 ```
 
-`--seed` makes the mocked citation numbers reproducible between runs (real telemetry
-extraction and arbitration still depend on the live LLM, so wording will vary run to run even
-with a seed — only the citation mock is deterministic). `--db` points at a different
-`epistemic_memory.db` if you want an isolated store (e.g. for a demo you don't want polluting
-your main learned priors).
+`--limit`/`--batch-size`/`--max-results` are aliases for the same value (5-50, validated). `--seed`
+makes the mocked citation numbers reproducible between runs (real telemetry extraction and
+arbitration still depend on the live LLM, so wording will vary run to run even with a seed —
+only the citation mock is deterministic). `--db` points at a different `epistemic_memory.db` if
+you want an isolated store. There is no `--interactive` flag anymore — every flagged paper is
+resolved automatically and non-blockingly (see "Fail-safe" above); nothing in this pipeline
+waits on a terminal prompt.
 
 Every run writes a full structured record — every paper, every extracted telemetry field,
 every score component, the arbiter's justification text, and each paper's audit status — to
@@ -594,13 +716,18 @@ python -m pytest test_matrix.py -v
 ## Repo layout
 
 ```
-agent.py                 pipeline: fetch -> extract -> filter -> score -> fail-safe/HITL -> arbiter
-graph_memory.py          persistent knowledge graph (SQLite + networkx) + Bayesian active learning
-                          + OOD/Jeffreys priors + signed citation/contradiction topology
+agent.py                 pipeline: fetch -> extract -> filter -> score -> non-blocking fail-safe
+                          -> arbiter. Configurable batch size (--limit/--batch-size, 5-50) with
+                          adaptive rate pacing for batches > 10.
+graph_memory.py          persistent knowledge graph (SQLite + networkx) + Bayesian active
+                          learning + OOD/Jeffreys priors + signed citation/contradiction
+                          topology + ML SurrogateOperator + calibration_history convergence log
 backtest_calibration.py  autonomous adversarial calibration engine (separate CLI entry point)
-ui.py                    Streamlit dashboard (streamlit run ui.py)
-test_matrix.py           43 offline unit tests (posterior formula, anomaly gate, Beta updates,
-                          OOD priors, precision penalty, citation sentiment, calibration mapping)
+ui.py                    two-tab Streamlit dashboard (streamlit run ui.py)
+test_matrix.py           65 offline unit tests (posterior formula, anomaly gate, Beta updates,
+                          OOD priors, precision penalty, citation sentiment, calibration mapping,
+                          batch-size validation, surrogate training/prediction, non-blocking
+                          resolution, calibration_history snapshots, signed edge styling)
 requirements.txt
 .env.example
 sample_run_output.json   a real run's full output, committed so the ranking + justifications

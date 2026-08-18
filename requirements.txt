@@ -7,6 +7,10 @@ rich>=13.7
 # Persistent knowledge graph + active learning (graph_memory.py)
 networkx>=3.2
 
+# ML surrogate operator (graph_memory.SurrogateOperator) — LogisticRegression
+# trained on accumulated feedback_log + nodes history
+scikit-learn>=1.4
+
 # Dashboard (ui.py) — streamlit-agraph is included per spec as an alternative
 # graph-rendering backend; ui.py itself renders via embedded pyvis HTML.
 streamlit>=1.35

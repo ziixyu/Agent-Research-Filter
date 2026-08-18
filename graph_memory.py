@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     audit_status      TEXT DEFAULT 'PASSED',
     url               TEXT,
     doi               TEXT,
+    standard_error    REAL,
+    is_preregistered  INTEGER,
     updated_at        TEXT
 );
 
@@ -157,6 +159,25 @@ CREATE TABLE IF NOT EXISTS feedback_log (
     new_beta   REAL,
     created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS calibration_history (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp          TEXT,
+    tier               TEXT,
+    alpha              REAL,
+    beta               REAL,
+    expected_credence  REAL,
+    iteration          INTEGER,
+    trigger_source     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS unresolved_audits (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    pmid           TEXT,
+    timestamp      TEXT,
+    reason         TEXT,
+    telemetry_json TEXT
+);
 """
 
 
@@ -179,6 +200,8 @@ def init_db(db_path: str = DB_PATH_DEFAULT) -> sqlite3.Connection:
     conn.executescript(_SCHEMA_SQL)
     _ensure_column(conn, "nodes", "url", "TEXT")
     _ensure_column(conn, "nodes", "doi", "TEXT")
+    _ensure_column(conn, "nodes", "standard_error", "REAL")
+    _ensure_column(conn, "nodes", "is_preregistered", "INTEGER")
     _ensure_column(conn, "edges", "sentiment", "TEXT")
     for tier, (a, b) in SEED_BETA_PRIORS.items():
         conn.execute(
@@ -212,6 +235,42 @@ def get_current_prior_hyperparams(conn: sqlite3.Connection) -> dict[str, tuple[f
     return {tier: (alpha, beta) for tier, alpha, beta in rows}
 
 
+def _snapshot_calibration(conn: sqlite3.Connection, tier: str, alpha: float, beta: float, trigger_source: str) -> None:
+    """Append one row to calibration_history: (tier, alpha, beta,
+    E[P(E)]) at this moment, tagged with an auto-incrementing per-tier
+    `iteration` (just COUNT(*) for that tier so far — simple, and exactly
+    what a convergence line chart wants as its x-axis) and a
+    `trigger_source` (who/what caused this update: 'human', 'surrogate',
+    'calibration_engine', ...). This is pure bookkeeping — callers should
+    already have committed the actual design_priors change before calling
+    this, since it just records what alpha/beta now say."""
+    iteration = conn.execute(
+        "SELECT COUNT(*) FROM calibration_history WHERE tier = ?", (tier,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO calibration_history "
+        "(timestamp, tier, alpha, beta, expected_credence, iteration, trigger_source) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (_now(), tier, alpha, beta, alpha / (alpha + beta), iteration, trigger_source),
+    )
+    conn.commit()
+
+
+def get_calibration_history_df(conn: sqlite3.Connection):
+    """The full calibration_history table as a pandas DataFrame, one row
+    per (tier, iteration) snapshot, ordered for convergence plotting —
+    ui.py's Tab 2 pivots this into wide format (index=iteration,
+    columns=tier, values=expected_credence) for st.line_chart."""
+    import pandas as pd
+
+    rows = conn.execute(
+        "SELECT timestamp, tier, alpha, beta, expected_credence, iteration, trigger_source "
+        "FROM calibration_history ORDER BY tier, iteration"
+    ).fetchall()
+    columns = ["timestamp", "tier", "alpha", "beta", "expected_credence", "iteration", "trigger_source"]
+    return pd.DataFrame(rows, columns=columns)
+
+
 def record_feedback(
     conn: sqlite3.Connection,
     tier: str,
@@ -219,10 +278,12 @@ def record_feedback(
     pmid: Optional[str] = None,
     manual_p: Optional[float] = None,
     pseudo_weight: float = 2.0,
+    trigger_source: str = "human",
 ) -> tuple[float, float]:
-    """Update a design tier's Beta(alpha, beta) in response to one human
-    decision on one paper, and append an audit row to feedback_log. Returns
-    the new (alpha, beta).
+    """Update a design tier's Beta(alpha, beta) in response to one
+    decision on one paper, append an audit row to feedback_log, and
+    snapshot the result into calibration_history. Returns the new
+    (alpha, beta).
 
     - "confirm"  (operator accepted the automated handling): alpha += 1 —
       one more piece of evidence that this tier's default credence is fine.
@@ -234,6 +295,11 @@ def record_feedback(
       pseudo-observations — alpha += manual_p*w, beta += (1-manual_p)*w —
       rather than being reset outright, so one human judgment shifts the
       distribution without erasing everything learned before it.
+
+    `trigger_source` identifies WHO made this decision ('human',
+    'surrogate', 'calibration_engine', ...) — purely descriptive metadata
+    carried into calibration_history/feedback_log's audit trail; it does
+    not change the update math.
     """
     row = conn.execute("SELECT alpha, beta FROM design_priors WHERE tier = ?", (tier,)).fetchone()
     if row is None:
@@ -266,21 +332,27 @@ def record_feedback(
         (pmid, tier, action, manual_p, old_alpha, old_beta, new_alpha, new_beta, _now()),
     )
     conn.commit()
+    _snapshot_calibration(conn, tier, new_alpha, new_beta, trigger_source)
     return new_alpha, new_beta
 
 
-def register_novel_tier(conn: sqlite3.Connection, tier: str) -> tuple[float, float]:
+def register_novel_tier(conn: sqlite3.Connection, tier: str, trigger_source: str = "ood_registration") -> tuple[float, float]:
     """Dynamically register a study-design tier the seed table doesn't
     know about, with the uninformative Jeffreys prior Beta(0.5, 0.5).
     Idempotent (INSERT OR IGNORE) — calling it again for a tier that now
-    exists (because a human has since given feedback on it) is a no-op and
-    does NOT reset that learning back to the Jeffreys prior."""
-    conn.execute(
+    exists (because feedback has since arrived for it) is a no-op and does
+    NOT reset that learning back to the Jeffreys prior, and does NOT write
+    a redundant calibration_history snapshot (only the actual first
+    registration does)."""
+    cur = conn.execute(
         "INSERT OR IGNORE INTO design_priors (tier, alpha, beta) VALUES (?, ?, ?)",
         (tier, JEFFREYS_ALPHA, JEFFREYS_BETA),
     )
+    newly_inserted = cur.rowcount > 0
     conn.commit()
     row = conn.execute("SELECT alpha, beta FROM design_priors WHERE tier = ?", (tier,)).fetchone()
+    if newly_inserted:
+        _snapshot_calibration(conn, tier, row[0], row[1], trigger_source)
     return tuple(row)
 
 
@@ -311,6 +383,152 @@ def is_ood_tier(tier: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Async quarantine queue — papers the non-blocking fail-safe couldn't
+# confidently auto-resolve (see agent.py's resolve_anomaly_non_blocking).
+# Inserting here never stalls the run; a human reviews these later, via
+# ui.py's Async Quarantine Queue accordion, on their own time.
+# --------------------------------------------------------------------------
+
+
+def insert_unresolved_audit(conn: sqlite3.Connection, *, pmid: str, reason: str, telemetry_json: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO unresolved_audits (pmid, timestamp, reason, telemetry_json) VALUES (?, ?, ?, ?)",
+        (pmid, _now(), reason, telemetry_json),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_unresolved_audits(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, pmid, timestamp, reason, telemetry_json FROM unresolved_audits ORDER BY id"
+    ).fetchall()
+    return [
+        {"id": r[0], "pmid": r[1], "timestamp": r[2], "reason": r[3], "telemetry_json": r[4]}
+        for r in rows
+    ]
+
+
+def delete_unresolved_audit(conn: sqlite3.Connection, audit_id: int) -> None:
+    """Called once a human has manually resolved a queued item (ui.py's
+    one-click override) — removes it from the queue. The actual Beta
+    update/prior override is a separate record_feedback() call; this only
+    clears the queue entry."""
+    conn.execute("DELETE FROM unresolved_audits WHERE id = ?", (audit_id,))
+    conn.commit()
+
+
+# --------------------------------------------------------------------------
+# ML surrogate operator — learns to predict a HITL decision from telemetry.
+# --------------------------------------------------------------------------
+
+
+class SurrogateOperator:
+    """A lightweight ML classifier that learns to predict what a human (or
+    the adversarial calibration engine) would decide about a flagged paper
+    — PASS / CLAMP / REJECT — from its telemetry, trained on the
+    accumulated feedback_log + nodes history in epistemic_memory.db.
+
+    Once trained (>= MIN_TRAINING_ROWS historical decisions, spanning at
+    least 2 distinct outcomes), agent.py's non-blocking fail-safe loop can
+    auto-resolve a NEW anomaly without a human in the loop, but only when
+    the model is confident enough (see agent.py's CONFIDENCE_THRESHOLD).
+    Below that confidence — or before there's enough training data at all —
+    the caller is expected to fall back to a conservative fixed penalty
+    instead of trusting an under-trained or uncertain prediction.
+
+    Feature vector (5 dims), matching the task spec exactly:
+        x = [log10(sample_size + 1), discrepancy_D, standard_error_SE,
+             is_preregistered, study_design_prior]
+    Target label: 0=PASS ('confirm'), 1=CLAMP ('override'), 2=REJECT ('reject')
+    — the exact 3 actions record_feedback() already accepts, so training
+    labels come directly from feedback_log.action with no extra mapping
+    table to keep in sync.
+    """
+
+    MIN_TRAINING_ROWS = 10
+    ACTION_TO_LABEL = {"confirm": 0, "override": 1, "reject": 2}
+    LABEL_TO_ACTION = {0: "confirm", 1: "override", 2: "reject"}
+    LABEL_NAMES = {0: "PASS", 1: "CLAMP", 2: "REJECT"}
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+        self.model = None
+        self.is_trained = False
+        self.n_training_rows = 0
+        self._fit()
+
+    def _training_rows(self) -> list[tuple]:
+        """Join feedback_log (the label) against nodes (the features that
+        existed for that pmid at last upsert) — a paper must have both a
+        recorded decision AND telemetry on file to be usable as a training
+        example."""
+        return self.conn.execute(
+            "SELECT f.action, n.sample_size, n.discrepancy_index, n.standard_error, "
+            "n.is_preregistered, n.prior_credence "
+            "FROM feedback_log f JOIN nodes n ON f.pmid = n.pmid "
+            "WHERE f.action IN ('confirm', 'override', 'reject') AND n.sample_size IS NOT NULL"
+        ).fetchall()
+
+    @staticmethod
+    def feature_vector(
+        sample_size: float, discrepancy_d: float, standard_error: Optional[float],
+        is_preregistered: bool, study_design_prior: float,
+    ) -> list[float]:
+        import math
+
+        return [
+            math.log10((sample_size or 0) + 1),
+            discrepancy_d or 0.0,
+            standard_error if standard_error is not None else 0.0,
+            1.0 if is_preregistered else 0.0,
+            study_design_prior if study_design_prior is not None else JEFFREYS_MEAN,
+        ]
+
+    def _fit(self) -> None:
+        rows = self._training_rows()
+        self.n_training_rows = len(rows)
+        if self.n_training_rows < self.MIN_TRAINING_ROWS:
+            return  # not enough history yet — stays untrained, predict() returns None
+
+        X, y = [], []
+        for action, n, d, se, prereg, prior in rows:
+            X.append(self.feature_vector(n, d, se, bool(prereg), prior))
+            y.append(self.ACTION_TO_LABEL[action])
+
+        if len(set(y)) < 2:
+            return  # LogisticRegression needs at least 2 distinct classes to fit
+
+        from sklearn.linear_model import LogisticRegression
+
+        model = LogisticRegression(max_iter=1000)
+        model.fit(X, y)
+        self.model = model
+        self.is_trained = True
+
+    def predict(
+        self, sample_size: float, discrepancy_d: float, standard_error: Optional[float],
+        is_preregistered: bool, study_design_prior: float,
+    ) -> Optional[tuple[int, str, float]]:
+        """Returns (label, label_name, confidence) or None if the model
+        isn't trained. `confidence` is the predicted class's probability
+        (softmax-normalized across PASS/CLAMP/REJECT) — the caller decides
+        what confidence bar is high enough to act on automatically."""
+        if not self.is_trained:
+            return None
+        x = [self.feature_vector(sample_size, discrepancy_d, standard_error, is_preregistered, study_design_prior)]
+        proba = self.model.predict_proba(x)[0]
+        # predict_proba's columns follow model.classes_ (sorted, but not
+        # necessarily [0,1,2] — e.g. if training data so far only contains
+        # 'confirm'/'reject' decisions, classes_ is [0,2] and proba has only
+        # 2 columns), so the argmax INDEX must be mapped back through
+        # classes_ rather than assumed to equal the label itself.
+        best_idx = int(proba.argmax())
+        label = int(self.model.classes_[best_idx])
+        return label, self.LABEL_NAMES[label], float(proba[best_idx])
+
+
+# --------------------------------------------------------------------------
 # Knowledge graph persistence
 # --------------------------------------------------------------------------
 
@@ -329,22 +547,26 @@ def upsert_node(
     audit_status: str = "PASSED",
     url: Optional[str] = None,
     doi: Optional[str] = None,
+    standard_error: Optional[float] = None,
+    is_preregistered: Optional[bool] = None,
 ) -> None:
     conn.execute(
         "INSERT INTO nodes (pmid, title, study_design, sample_size, prior_credence, "
-        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, url, doi, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, url, doi, "
+        "standard_error, is_preregistered, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(pmid) DO UPDATE SET "
         "title=excluded.title, study_design=excluded.study_design, "
         "sample_size=excluded.sample_size, prior_credence=excluded.prior_credence, "
         "discrepancy_index=excluded.discrepancy_index, "
         "likelihood_penalty=excluded.likelihood_penalty, "
         "posterior_score=excluded.posterior_score, audit_status=excluded.audit_status, "
-        "url=excluded.url, doi=excluded.doi, updated_at=excluded.updated_at",
+        "url=excluded.url, doi=excluded.doi, standard_error=excluded.standard_error, "
+        "is_preregistered=excluded.is_preregistered, updated_at=excluded.updated_at",
         (
             pmid, title, study_design, sample_size, prior_credence,
             discrepancy_index, likelihood_penalty, posterior_score, audit_status,
-            url, doi, _now(),
+            url, doi, standard_error, (None if is_preregistered is None else int(is_preregistered)), _now(),
         ),
     )
     conn.commit()
@@ -387,9 +609,10 @@ def load_graph(conn: sqlite3.Connection):
     g = nx.DiGraph()
     for row in conn.execute(
         "SELECT pmid, title, study_design, sample_size, prior_credence, "
-        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, url, doi FROM nodes"
+        "discrepancy_index, likelihood_penalty, posterior_score, audit_status, url, doi, "
+        "standard_error, is_preregistered FROM nodes"
     ):
-        pmid, title, design, n, prior, d, lik, score, status, url, doi = row
+        pmid, title, design, n, prior, d, lik, score, status, url, doi, se, prereg = row
         g.add_node(
             pmid,
             title=title,
@@ -402,6 +625,8 @@ def load_graph(conn: sqlite3.Connection):
             audit_status=status,
             url=url,
             doi=doi,
+            standard_error=se,
+            is_preregistered=bool(prereg) if prereg is not None else False,
             is_ood_design=is_ood_tier(beta_tier_for(design, n or 0)),
         )
     for row in conn.execute("SELECT src, dst, edge_type, sentiment, detail FROM edges"):

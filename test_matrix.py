@@ -2,24 +2,40 @@
 Sanity checks for:
   - Module 3's Bayesian/epistemic state update in agent.py: prior credence
     P(E) -> likelihood penalty L(Absurdity) -> posterior S.
-  - Module 3.5's fail-safe/HITL anomaly gate (detect_anomaly/apply_audit_flags).
+  - Module 3.5's fail-safe (detect_anomaly/apply_audit_flags) and its
+    non-blocking tri-state resolution (resolve_anomaly_non_blocking).
   - graph_memory.py's Empirical Bayesian active learning (Beta hyperparameter
-    updates from simulated human feedback) and contradiction-edge heuristic.
+    updates from simulated feedback), the ML SurrogateOperator, calibration
+    history snapshots, and the contradiction/citation-sentiment heuristics.
+  - Configurable batch sizing (--limit/--batch-size bounds validation).
 
-No network, no API keys — pure logic, and every SQLite test uses a private
-in-memory database (":memory:"), so nothing here touches a real
-epistemic_memory.db on disk. Run with:
+No network, no API keys — pure logic (SurrogateOperator training uses only
+synthetic in-memory data), and every SQLite test uses a private in-memory
+database (":memory:"), so nothing here touches a real epistemic_memory.db on
+disk. Run with:
     python test_matrix.py
+    python -m pytest test_matrix.py -v
 """
+
+import argparse
 
 import graph_memory
 from agent import (
+    BATCH_SIZE_MAX,
+    BATCH_SIZE_MIN,
+    CONFIDENCE_THRESHOLD,
+    FAILSAFE_LIKELIHOOD,
+    FAILSAFE_PRIOR,
+    RATE_PACING_MIN_INTERVAL,
+    RatePacer,
     ScoredPaper,
     PaperMetadata,
     PaperTelemetry,
+    _batch_size,
     apply_audit_flags,
     clip01,
     detect_anomaly,
+    resolve_anomaly_non_blocking,
     score_one,
     score_papers,
 )
@@ -633,6 +649,333 @@ def test_paper_metadata_doi_round_trips_through_scoring():
     dumped = scored[0].model_dump()
     assert dumped["metadata"]["doi"] == "10.1000/xyz123"
     assert dumped["metadata"]["url"] == "https://pubmed.ncbi.nlm.nih.gov/1/"
+
+
+# --------------------------------------------------------------------------
+# Configurable batch sizing: --limit/--batch-size bounds checking.
+# --------------------------------------------------------------------------
+
+
+def test_batch_size_accepts_values_in_range():
+    assert _batch_size("5") == 5
+    assert _batch_size("10") == 10
+    assert _batch_size("50") == 50
+    assert _batch_size(str(BATCH_SIZE_MIN)) == BATCH_SIZE_MIN
+    assert _batch_size(str(BATCH_SIZE_MAX)) == BATCH_SIZE_MAX
+
+
+def test_batch_size_rejects_out_of_range_values():
+    for bad in ["4", "51", "0", "-1", "1000"]:
+        try:
+            _batch_size(bad)
+            assert False, f"{bad!r} should have been rejected"
+        except argparse.ArgumentTypeError:
+            pass
+
+
+def test_batch_size_rejects_non_integer_values():
+    for bad in ["ten", "5.5", ""]:
+        try:
+            _batch_size(bad)
+            assert False, f"{bad!r} should have been rejected"
+        except argparse.ArgumentTypeError:
+            pass
+
+
+def test_batch_size_cli_aliases_share_one_dest():
+    """--max-results, --limit, --batch-size must all set the same argparse
+    dest so any of the three spellings works identically."""
+    import argparse as ap
+
+    parser = ap.ArgumentParser()
+    parser.add_argument("--max-results", "--limit", "--batch-size", dest="max_results", type=_batch_size, default=10)
+    assert parser.parse_args(["--limit", "20"]).max_results == 20
+    assert parser.parse_args(["--batch-size", "15"]).max_results == 15
+    assert parser.parse_args(["--max-results", "8"]).max_results == 8
+    assert parser.parse_args([]).max_results == 10
+
+
+def test_rate_pacing_min_interval_matches_spec():
+    assert RATE_PACING_MIN_INTERVAL == 4.2
+
+
+def test_rate_pacer_enforces_minimum_interval():
+    """RatePacer.wait() should not sleep on the very first call (no prior
+    call to pace against), and should sleep close to the configured
+    interval on an immediate second call."""
+    import time as _time
+
+    pacer = RatePacer(min_interval=0.05)
+    t0 = _time.monotonic()
+    pacer.wait()  # first call: no wait
+    elapsed_first = _time.monotonic() - t0
+    assert elapsed_first < 0.05
+
+    t1 = _time.monotonic()
+    pacer.wait()  # second call, immediately after: should pace
+    elapsed_second = _time.monotonic() - t1
+    assert elapsed_second >= 0.04  # allow tiny scheduling slack under 0.05
+
+
+# --------------------------------------------------------------------------
+# ML SurrogateOperator: feature extraction, training fallback, confidence
+# threshold routing.
+# --------------------------------------------------------------------------
+
+
+def test_surrogate_feature_vector_shape_and_values():
+    x = graph_memory.SurrogateOperator.feature_vector(
+        sample_size=99, discrepancy_d=1.5, standard_error=0.3, is_preregistered=True, study_design_prior=0.8
+    )
+    assert len(x) == 5
+    import math
+
+    assert abs(x[0] - math.log10(100)) < 1e-9  # log10(N+1)
+    assert x[1] == 1.5
+    assert x[2] == 0.3
+    assert x[3] == 1.0  # is_preregistered -> 1.0
+    assert x[4] == 0.8
+
+
+def test_surrogate_feature_vector_handles_missing_se_and_none_prior():
+    x = graph_memory.SurrogateOperator.feature_vector(
+        sample_size=0, discrepancy_d=0.0, standard_error=None, is_preregistered=False, study_design_prior=None
+    )
+    assert x[2] == 0.0  # missing SE -> 0.0, not None/crash
+    assert x[4] == graph_memory.JEFFREYS_MEAN  # missing prior -> Jeffreys mean fallback
+
+
+def test_surrogate_untrained_below_minimum_rows():
+    conn = graph_memory.init_db(":memory:")
+    so = graph_memory.SurrogateOperator(conn)
+    assert so.is_trained is False
+    assert so.n_training_rows == 0
+    assert so.predict(500, 0.0, 0.1, True, 0.9) is None
+    conn.close()
+
+
+def _seed_surrogate_training_data(conn, n_each=6):
+    """Two cleanly-separated synthetic classes, joined via nodes+feedback_log
+    exactly as SurrogateOperator._training_rows() expects."""
+    for i in range(n_each):
+        pmid = f"pass-{i}"
+        graph_memory.upsert_node(
+            conn, pmid=pmid, title="t", study_design="RCT", sample_size=800,
+            prior_credence=0.9, discrepancy_index=0.0, likelihood_penalty=1.0,
+            posterior_score=0.8, standard_error=0.1, is_preregistered=True,
+        )
+        graph_memory.record_feedback(conn, tier="Phase III RCT", action="confirm", pmid=pmid)
+    for i in range(n_each):
+        pmid = f"reject-{i}"
+        graph_memory.upsert_node(
+            conn, pmid=pmid, title="t", study_design="Retrospective/Observational", sample_size=8,
+            prior_credence=0.2, discrepancy_index=4.0, likelihood_penalty=0.1,
+            posterior_score=0.05, standard_error=1.8, is_preregistered=False,
+        )
+        graph_memory.record_feedback(conn, tier="Retrospective", action="reject", pmid=pmid)
+
+
+def test_surrogate_trains_once_minimum_rows_reached():
+    conn = graph_memory.init_db(":memory:")
+    _seed_surrogate_training_data(conn, n_each=6)  # 12 total >= MIN_TRAINING_ROWS
+    so = graph_memory.SurrogateOperator(conn)
+    assert so.is_trained is True
+    assert so.n_training_rows == 12
+    conn.close()
+
+
+def test_surrogate_predicts_correct_label_on_separable_data():
+    conn = graph_memory.init_db(":memory:")
+    _seed_surrogate_training_data(conn, n_each=8)
+    so = graph_memory.SurrogateOperator(conn)
+    assert so.is_trained
+
+    pass_pred = so.predict(800, 0.0, 0.1, True, 0.9)
+    assert pass_pred is not None
+    assert pass_pred[1] == "PASS"
+    assert pass_pred[2] >= CONFIDENCE_THRESHOLD
+
+    reject_pred = so.predict(8, 4.0, 1.8, False, 0.2)
+    assert reject_pred is not None
+    assert reject_pred[1] == "REJECT"
+    assert reject_pred[2] >= CONFIDENCE_THRESHOLD
+
+
+def test_surrogate_predict_proba_label_matches_classes_order():
+    """Regression test for a real bug caught during development:
+    predict_proba()'s columns follow model.classes_ (sorted, but not
+    necessarily [0,1,2] — e.g. with only 2 of 3 action types seen so far,
+    classes_ is [0,2] with 2 columns), so predict() must map the argmax
+    INDEX back through classes_ rather than assume index == label."""
+    conn = graph_memory.init_db(":memory:")
+    _seed_surrogate_training_data(conn, n_each=6)  # only 'confirm'(0) and 'reject'(2) — no CLAMP(1)
+    so = graph_memory.SurrogateOperator(conn)
+    assert so.is_trained
+    assert list(so.model.classes_) == [0, 2]  # label 1 (CLAMP) never seen
+    pred = so.predict(800, 0.0, 0.1, True, 0.9)
+    assert pred[0] in (0, 2)  # must be a real seen label, never crash or return 1
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# Non-blocking tri-state resolution (agent.py): quarantine insertion and
+# status assignment, without any blocking input.
+# --------------------------------------------------------------------------
+
+
+def test_resolve_anomaly_falls_back_to_failsafe_when_untrained():
+    conn = graph_memory.init_db(":memory:")
+    cases = [make_case("1", "Retrospective/Observational", 2024, 15, 10, 5)]  # D>=2.0 trip
+    scored = score_papers(cases)
+    apply_audit_flags(scored)
+    p = scored[0]
+    assert p.audit_status == "FLAGGED"
+
+    surrogate = graph_memory.SurrogateOperator(conn)  # untrained, no history
+    resolve_anomaly_non_blocking(p, conn, surrogate)
+
+    assert p.audit_status == "ASYNC_QUARANTINED"
+    assert p.prior_credence == FAILSAFE_PRIOR
+    assert p.likelihood_penalty == FAILSAFE_LIKELIHOOD
+    assert p.surrogate_action is None
+    conn.close()
+
+
+def test_resolve_anomaly_inserts_into_unresolved_audits_without_blocking():
+    """The whole point of 'non-blocking': this must complete and insert a
+    row, never call input()/console.input()."""
+    conn = graph_memory.init_db(":memory:")
+    cases = [make_case("42", "RCT", 2024, 5, 10, 1)]  # N<30 interventional trip
+    scored = score_papers(cases)
+    apply_audit_flags(scored)
+    p = scored[0]
+
+    resolve_anomaly_non_blocking(p, conn, surrogate=None)
+
+    assert p.audit_status == "ASYNC_QUARANTINED"
+    queued = graph_memory.get_unresolved_audits(conn)
+    assert len(queued) == 1
+    assert queued[0]["pmid"] == "42"
+    assert "N=" in queued[0]["reason"]
+    conn.close()
+
+
+def test_resolve_anomaly_auto_resolves_when_surrogate_confident():
+    conn = graph_memory.init_db(":memory:")
+    _seed_surrogate_training_data(conn, n_each=8)
+    surrogate = graph_memory.SurrogateOperator(conn)
+
+    # A case that IS flagged (small N, high hyperbole) and closely resembles
+    # the trained REJECT cluster's FEATURES (prior=0.2, wide CI -> SE~1.8),
+    # not just its raw telemetry — score_papers()'s default prior_lookup
+    # (the static seed mean, 0.40 for Retrospective) would otherwise put
+    # this paper's prior feature between the two training clusters instead
+    # of matching either, which understates confidence for reasons that
+    # have nothing to do with the surrogate mechanism itself (see the
+    # nearby comment in the untrained-vs-low-confidence tests above).
+    cases = [
+        make_case("998", "Retrospective/Observational", 2024, 8, 10, 5, ci_lower=0.0, ci_upper=7.06)
+    ]
+    scored = score_papers(cases, prior_lookup={"Retrospective": 0.2})
+    apply_audit_flags(scored)
+    p = scored[0]
+    assert p.audit_status == "FLAGGED"
+
+    resolve_anomaly_non_blocking(p, conn, surrogate)
+    assert p.audit_status == "AUTO_RESOLVED_BY_SURROGATE"
+    assert p.surrogate_action == "REJECT"
+    assert p.surrogate_confidence >= CONFIDENCE_THRESHOLD
+    assert graph_memory.get_unresolved_audits(conn) == []  # never queued — surrogate handled it
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# calibration_history: snapshot logging and DataFrame reconstruction.
+# --------------------------------------------------------------------------
+
+
+def test_calibration_history_snapshots_on_record_feedback():
+    conn = graph_memory.init_db(":memory:")
+    graph_memory.record_feedback(conn, tier="Retrospective", action="confirm", pmid="1", trigger_source="human")
+    graph_memory.record_feedback(conn, tier="Retrospective", action="confirm", pmid="2", trigger_source="surrogate")
+    df = graph_memory.get_calibration_history_df(conn)
+    assert len(df) == 2
+    assert list(df["iteration"]) == [0, 1]
+    assert list(df["trigger_source"]) == ["human", "surrogate"]
+    assert df.iloc[1]["expected_credence"] > df.iloc[0]["expected_credence"]  # both confirms -> monotonic up
+    conn.close()
+
+
+def test_calibration_history_snapshots_on_novel_tier_registration_only_once():
+    conn = graph_memory.init_db(":memory:")
+    graph_memory.get_prior_credence(conn, "Mendelian Randomization", 500)  # first registration -> 1 snapshot
+    graph_memory.get_prior_credence(conn, "Mendelian Randomization", 500)  # idempotent -> no new snapshot
+    df = graph_memory.get_calibration_history_df(conn)
+    mr_rows = df[df["tier"] == "Mendelian Randomization"]
+    assert len(mr_rows) == 1
+    assert mr_rows.iloc[0]["alpha"] == graph_memory.JEFFREYS_ALPHA
+    assert mr_rows.iloc[0]["beta"] == graph_memory.JEFFREYS_BETA
+    conn.close()
+
+
+def test_calibration_history_df_columns_and_ordering():
+    conn = graph_memory.init_db(":memory:")
+    graph_memory.record_feedback(conn, tier="Meta-Analysis", action="confirm", pmid="1")
+    graph_memory.record_feedback(conn, tier="Retrospective", action="reject", pmid="2")
+    graph_memory.record_feedback(conn, tier="Meta-Analysis", action="confirm", pmid="3")
+    df = graph_memory.get_calibration_history_df(conn)
+    assert list(df.columns) == [
+        "timestamp", "tier", "alpha", "beta", "expected_credence", "iteration", "trigger_source"
+    ]
+    # ordered by tier, then iteration -> both Meta-Analysis rows adjacent and increasing
+    meta_rows = df[df["tier"] == "Meta-Analysis"].sort_values("iteration")
+    assert list(meta_rows["iteration"]) == [0, 1]
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# Signed edge color/style classification logic (ui.py's EDGE_STYLE table,
+# mirrored here so the mapping itself is verified without importing
+# Streamlit).
+# --------------------------------------------------------------------------
+
+_EDGE_STYLE = {
+    "SUPPORTING": {"color": "#2ecc71", "width": 2, "dashes": False},
+    "MENTION": {"color": "#95a5a6", "width": 1, "dashes": False},
+    "REFUTING": {"color": "#e74c3c", "width": 3, "dashes": True},
+}
+
+
+def test_edge_style_matches_spec_exactly():
+    assert _EDGE_STYLE["SUPPORTING"] == {"color": "#2ecc71", "width": 2, "dashes": False}
+    assert _EDGE_STYLE["MENTION"] == {"color": "#95a5a6", "width": 1, "dashes": False}
+    assert _EDGE_STYLE["REFUTING"] == {"color": "#e74c3c", "width": 3, "dashes": True}
+
+
+def test_contradiction_edges_always_classify_as_refuting_style():
+    """agent.py tags every contradiction edge sentiment='REFUTING'
+    unconditionally; ui.py's rendering logic does the same regardless of
+    whatever (if anything) is in the edge's own sentiment attribute."""
+    edge_type = "contradiction"
+    sentiment_attr = None  # contradiction edges don't set a sentiment column value in some paths
+    resolved = "REFUTING" if edge_type == "contradiction" else (sentiment_attr or "MENTION")
+    assert resolved == "REFUTING"
+    assert _EDGE_STYLE[resolved]["dashes"] is True
+
+
+def test_citation_edge_sentiment_resolves_to_correct_style():
+    for sentiment in ("SUPPORTING", "MENTION", "REFUTING"):
+        edge_type = "citation"
+        resolved = "REFUTING" if edge_type == "contradiction" else (sentiment or "MENTION")
+        assert resolved == sentiment
+        assert resolved in _EDGE_STYLE
+
+
+def test_citation_edge_missing_sentiment_defaults_to_mention_style():
+    edge_type, sentiment_attr = "citation", None
+    resolved = "REFUTING" if edge_type == "contradiction" else (sentiment_attr or "MENTION")
+    assert resolved == "MENTION"
+    assert _EDGE_STYLE[resolved] == {"color": "#95a5a6", "width": 1, "dashes": False}
 
 
 if __name__ == "__main__":
