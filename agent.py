@@ -78,10 +78,8 @@ DEFAULT_MAX_RESULTS = 10
 # --------------------------------------------------------------------------
 # Module 3 formalization: Bayesian/epistemic state update.
 #
-# See README.md "Mathematical State Formulation" for the equations, and
-# ARCHITECTURE_NOTES.md "Design Rationale & Judgment Calls" for the full
-# argument. Short version: a paper's final ranking score is treated as a
-# POSTERIOR belief in
+# See README.md "The judgment call, formalized" for the full argument. Short
+# version: a paper's final ranking score is treated as a POSTERIOR belief in
 # its trustworthiness, built from a design-tier PRIOR that gets discounted by
 # a LIKELIHOOD penalty when the paper's own claims outrun what its evidence
 # tier can support, then blended with citation velocity.
