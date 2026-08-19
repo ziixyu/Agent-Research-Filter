@@ -208,18 +208,19 @@ with tab1:
         )
         st.markdown("**Discrepancy Index & Likelihood Decay**")
         st.latex(
-            r"D = \max(0, \text{Claim Hyperbole} - \text{Design Rigor Ceiling}), "
-            r"\quad L = \exp(-0.8 \cdot D)"
+            r"D = \max(0, H - R_{\text{tier}} \cdot 5), \quad "
+            r"D_{\text{adj}} = D \cdot (2 - W_N), \quad "
+            r"L(D_{\text{adj}}) = \exp(-0.5 \cdot \max(0, D_{\text{adj}} - 0.5))"
         )
         st.markdown("**Statistical Precision & Standard Error**")
         st.latex(
             r"\text{SE} = \frac{\text{CI}_{\text{upper}} - \text{CI}_{\text{lower}}}{3.92}, "
-            r"\quad \text{Precision Penalty} = \exp(-2.0 \cdot \max(0, \text{SE} - 0.5))"
+            r"\quad \text{Precision Penalty} = \exp(-0.5 \cdot \max(0, \text{SE} - 0.5))"
         )
         st.markdown("**Global Normalized Citation Velocity**")
         st.latex(
             r"V_{\text{norm}} = \frac{V - V_{\min}}{V_{\max} - V_{\min}}, "
-            r"\quad V = \frac{\text{Citations}}{\Delta\text{Years} + 0.5}"
+            r"\quad V = \frac{\text{Citations}}{\Delta\text{Years} + 1}"
         )
 
     # ------------------------------------------------------------------

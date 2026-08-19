@@ -879,7 +879,7 @@ def infer_outcome_direction(title: str, abstract: str) -> int:
     -1 = reports a null/negative outcome, 0 = neither phrase family present.
 
     This is a cheap keyword heuristic, deliberately NOT a semantic
-    contradiction detector — see README "known limitations". It exists so
+    contradiction detector — see ARCHITECTURE_NOTES.md "Known Limitations". It exists so
     the graph can flag *candidate* contradictions for a human to actually
     read, without spending a 3rd LLM call per paper (this repo already
     documents real free-tier quota pain from Gemini calls; O(n) string
